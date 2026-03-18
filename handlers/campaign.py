@@ -63,7 +63,6 @@ async def _sync_campaign_templates(session):
         if not season:
             season = CampaignSeason(season_number=season_data["season_number"])
             session.add(season)
-            await session.flush()
 
         season.name = season_data["name"]
         season.description = season_data["description"]
