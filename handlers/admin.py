@@ -184,6 +184,38 @@ def _kick_from_active_battles(telegram_id: int) -> bool:
     return kicked
 
 
+async def _wipe_user_account(session, target_user: User):
+    """Полностью удалить игрока и связанные записи."""
+    target_user_id = int(target_user.id)
+    target_tg = int(target_user.telegram_id)
+
+    _kick_from_active_battles(target_tg)
+
+    await session.execute(update(Clan).where(Clan.owner_id == target_user_id).values(owner_id=None))
+
+    await session.execute(delete(Friend).where(or_(Friend.requester_id == target_user_id, Friend.addressee_id == target_user_id)))
+    await session.execute(delete(Battle).where(or_(Battle.player1_id == target_user_id, Battle.player2_id == target_user_id, Battle.winner_id == target_user_id)))
+    await session.execute(delete(MarketListing).where(or_(MarketListing.seller_id == target_user_id, MarketListing.buyer_id == target_user_id)))
+    await session.execute(delete(TradeOffer).where(or_(TradeOffer.sender_id == target_user_id, TradeOffer.receiver_id == target_user_id)))
+    await session.execute(delete(CoinTransaction).where(CoinTransaction.user_id == target_user_id))
+
+    await session.execute(delete(UserCard).where(UserCard.user_id == target_user_id))
+    await session.execute(delete(UserTechnique).where(UserTechnique.user_id == target_user_id))
+    await session.execute(delete(UserTitle).where(UserTitle.user_id == target_user_id))
+    await session.execute(delete(UserAchievement).where(UserAchievement.user_id == target_user_id))
+    await session.execute(delete(UserDailyQuest).where(UserDailyQuest.user_id == target_user_id))
+    await session.execute(delete(DailyReward).where(DailyReward.user_id == target_user_id))
+    await session.execute(delete(UserStats).where(UserStats.user_id == target_user_id))
+    await session.execute(delete(UserCampaignProgress).where(UserCampaignProgress.user_id == target_user_id))
+    await session.execute(delete(UserBossAttempt).where(UserBossAttempt.user_id == target_user_id))
+    await session.execute(delete(UserPromoCode).where(UserPromoCode.user_id == target_user_id))
+    await session.execute(delete(UserAcademyVisit).where(UserAcademyVisit.user_id == target_user_id))
+    await session.execute(delete(UserProfile).where(UserProfile.user_id == target_user_id))
+    await session.execute(delete(UserQuote).where(UserQuote.user_id == target_user_id))
+
+    await session.delete(target_user)
+
+
 async def is_admin(telegram_id: int) -> bool:
     if telegram_id in ADMIN_IDS:
         return True
@@ -668,35 +700,10 @@ async def cmd_reset_user(message: Message):
             await message.answer("❌ Нельзя сбрасывать администратора.")
             return
 
-        target_user_id = target_user.id
-        target_tg = target_user.telegram_id
+        target_tg = int(target_user.telegram_id)
         target_name = _display_name(target_user)
 
-        _kick_from_active_battles(target_tg)
-
-        await session.execute(update(Clan).where(Clan.owner_id == target_user_id).values(owner_id=None))
-
-        await session.execute(delete(Friend).where(or_(Friend.requester_id == target_user_id, Friend.addressee_id == target_user_id)))
-        await session.execute(delete(Battle).where(or_(Battle.player1_id == target_user_id, Battle.player2_id == target_user_id, Battle.winner_id == target_user_id)))
-        await session.execute(delete(MarketListing).where(or_(MarketListing.seller_id == target_user_id, MarketListing.buyer_id == target_user_id)))
-        await session.execute(delete(TradeOffer).where(or_(TradeOffer.sender_id == target_user_id, TradeOffer.receiver_id == target_user_id)))
-        await session.execute(delete(CoinTransaction).where(CoinTransaction.user_id == target_user_id))
-
-        await session.execute(delete(UserCard).where(UserCard.user_id == target_user_id))
-        await session.execute(delete(UserTechnique).where(UserTechnique.user_id == target_user_id))
-        await session.execute(delete(UserTitle).where(UserTitle.user_id == target_user_id))
-        await session.execute(delete(UserAchievement).where(UserAchievement.user_id == target_user_id))
-        await session.execute(delete(UserDailyQuest).where(UserDailyQuest.user_id == target_user_id))
-        await session.execute(delete(DailyReward).where(DailyReward.user_id == target_user_id))
-        await session.execute(delete(UserStats).where(UserStats.user_id == target_user_id))
-        await session.execute(delete(UserCampaignProgress).where(UserCampaignProgress.user_id == target_user_id))
-        await session.execute(delete(UserBossAttempt).where(UserBossAttempt.user_id == target_user_id))
-        await session.execute(delete(UserPromoCode).where(UserPromoCode.user_id == target_user_id))
-        await session.execute(delete(UserAcademyVisit).where(UserAcademyVisit.user_id == target_user_id))
-        await session.execute(delete(UserProfile).where(UserProfile.user_id == target_user_id))
-        await session.execute(delete(UserQuote).where(UserQuote.user_id == target_user_id))
-
-        await session.delete(target_user)
+        await _wipe_user_account(session, target_user)
         await session.commit()
 
     await message.answer(
@@ -715,6 +722,41 @@ async def cmd_reset_user(message: Message):
         )
     except Exception:
         pass
+
+
+@router.message(Command("resetme"))
+async def cmd_reset_me(message: Message):
+    args = message.text.split()[1:]
+    if not args or args[0].strip().upper() != "CONFIRM":
+        await message.answer(
+            "⚠️ <b>Самосброс аккаунта</b>\n\n"
+            "Эта команда полностью удаляет твой профиль из БД: карты, прогресс, статистику и инвентарь.\n"
+            "Откатить это действие нельзя.\n\n"
+            "Для подтверждения отправь:\n"
+            "<code>/resetme CONFIRM</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == message.from_user.id)
+        )
+        target_user = result.scalar_one_or_none()
+        if not target_user:
+            await message.answer(
+                "ℹ️ Профиль в БД не найден. Если ты еще не начинал игру, просто используй /start."
+            )
+            return
+
+        await _wipe_user_account(session, target_user)
+        await session.commit()
+
+    await message.answer(
+        "✅ <b>Аккаунт сброшен.</b>\n\n"
+        "Твой профиль удален из базы. Напиши /start, чтобы начать игру с нуля.",
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("broadcast"))
