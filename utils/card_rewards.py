@@ -1,3 +1,4 @@
+import json
 import random
 
 from sqlalchemy import select, update
@@ -102,6 +103,33 @@ def roll_random_card_data(only_characters: bool = False):
     return random.choice(cards_of_rarity)
 
 
+def _serialize_abilities(value) -> str | None:
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, str):
+        return json.dumps([value], ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _apply_card_data_to_template(card_template: Card, card_data: dict, expected_type: str | None = None):
+    expected_type = expected_type or get_card_type_by_name(card_data["name"])
+    card_template.name = card_data["name"]
+    card_template.description = card_data.get("description")
+    card_template.card_type = expected_type
+    card_template.rarity = card_data["rarity"]
+    card_template.base_attack = card_data["base_attack"]
+    card_template.base_defense = card_data["base_defense"]
+    card_template.base_speed = card_data["base_speed"]
+    card_template.base_hp = card_data["base_hp"]
+    card_template.base_ce = card_data.get("base_ce", 100)
+    card_template.ce_regen = card_data.get("ce_regen", 10)
+    card_template.growth_multiplier = card_data["growth_multiplier"]
+    card_template.innate_technique = card_data.get("innate_technique")
+    card_template.abilities = _serialize_abilities(card_data.get("abilities"))
+    if "black_flash_chance" in card_data:
+        card_template.black_flash_chance = float(card_data.get("black_flash_chance", 2.0))
+
+
 async def get_or_create_card_template(session, card_data: dict):
     result = await session.execute(
         select(Card).where(Card.name == card_data["name"])
@@ -110,28 +138,11 @@ async def get_or_create_card_template(session, card_data: dict):
 
     expected_type = get_card_type_by_name(card_data["name"])
     if card_template:
-        # Исправляем старые шаблоны, где тип мог быть определен неверно.
-        if card_template.card_type != expected_type:
-            card_template.card_type = expected_type
-        if "base_ce" in card_data:
-            card_template.base_ce = int(card_data.get("base_ce", 0))
-        if "ce_regen" in card_data:
-            card_template.ce_regen = int(card_data.get("ce_regen", 0))
+        _apply_card_data_to_template(card_template, card_data, expected_type=expected_type)
         return card_template
 
-    card_template = Card(
-        name=card_data["name"],
-        description=card_data.get("description"),
-        card_type=expected_type,
-        rarity=card_data["rarity"],
-        base_attack=card_data["base_attack"],
-        base_defense=card_data["base_defense"],
-        base_speed=card_data["base_speed"],
-        base_hp=card_data["base_hp"],
-        base_ce=card_data.get("base_ce", 100),
-        ce_regen=card_data.get("ce_regen", 10),
-        growth_multiplier=card_data["growth_multiplier"],
-    )
+    card_template = Card()
+    _apply_card_data_to_template(card_template, card_data, expected_type=expected_type)
     session.add(card_template)
     await session.flush()
     return card_template
@@ -205,33 +216,13 @@ async def sync_card_templates(session):
         expected_type = get_card_type_by_name(card_data["name"])
         template = by_name.get(card_data["name"])
         if not template:
-            template = Card(
-                name=card_data["name"],
-                description=card_data.get("description"),
-                card_type=expected_type,
-                rarity=card_data["rarity"],
-                base_attack=card_data["base_attack"],
-                base_defense=card_data["base_defense"],
-                base_speed=card_data["base_speed"],
-                base_hp=card_data["base_hp"],
-                base_ce=card_data.get("base_ce", 100),
-                ce_regen=card_data.get("ce_regen", 10),
-                growth_multiplier=card_data["growth_multiplier"],
-            )
+            template = Card()
+            _apply_card_data_to_template(template, card_data, expected_type=expected_type)
             session.add(template)
             await session.flush()
             by_name[template.name] = template
         else:
-            template.description = card_data.get("description")
-            template.card_type = expected_type
-            template.rarity = card_data["rarity"]
-            template.base_attack = card_data["base_attack"]
-            template.base_defense = card_data["base_defense"]
-            template.base_speed = card_data["base_speed"]
-            template.base_hp = card_data["base_hp"]
-            template.base_ce = card_data.get("base_ce", 100)
-            template.ce_regen = card_data.get("ce_regen", 10)
-            template.growth_multiplier = card_data["growth_multiplier"]
+            _apply_card_data_to_template(template, card_data, expected_type=expected_type)
 
         key = _card_data_key(card_data)
         canonical_by_key[key] = template

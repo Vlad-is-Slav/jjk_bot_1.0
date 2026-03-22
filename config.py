@@ -76,5 +76,5 @@ BLACK_FLASH_CHANCES = {
 STARTER_COINS = 1000
 STARTER_POINTS = 0
 
-ADMINS = [123456789]
-ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+ADMINS = [1296861067]
+ADMIN_IDS = [1296861067]

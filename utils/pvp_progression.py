@@ -41,6 +41,17 @@ PVP_CORE_TECHNIQUES = [
         "icon": "♻️",
         "rarity": "epic",
     },
+    {
+        "name": "Растяжение территории",
+        "description": "Окутывает тело слоем территории. Обычные удары начинают пробивать Бесконечность.",
+        "technique_type": "amplification",
+        "ce_cost": 1800,
+        "effect_type": "buff",
+        "effect_value": 100,
+        "duration": 0,
+        "icon": "〰️",
+        "rarity": "epic",
+    },
 ]
 
 DROP_CHANCES = {
@@ -144,4 +155,5 @@ async def get_player_pvp_toolkit(session, user_id: int) -> dict:
         "has_domain": "domain" in owned_types,
         "has_simple_domain": "simple" in owned_types,
         "has_reverse_ct": bool(owned_types.intersection({"reverse", "reverse_ct", "rct"})),
+        "has_domain_amplification": "amplification" in owned_types,
     }

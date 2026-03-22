@@ -12,7 +12,7 @@ INNATE_TECHNIQUES = [
         "technique_type": "innate",
         "ce_cost": 0,
         "effect_type": "passive",
-        "effect_value": 50,  # -50% стоимости CE
+        "effect_value": 60,  # -?% стоимости CE
         "icon": "👁️",
         "rarity": "legendary"
     },
@@ -22,7 +22,7 @@ INNATE_TECHNIQUES = [
         "technique_type": "innate",
         "ce_cost": 10,
         "effect_type": "buff",
-        "effect_value": 90,  # 90% шанс заблокировать урон
+        "effect_value": 100,  # 100% шанс заблокировать урон
         "icon": "♾️",
         "rarity": "legendary"
     },

@@ -22,6 +22,25 @@ PACT_EFFECTS: dict[str, dict[str, Any]] = {
         "ce_regen_multiplier": 0.6,
         "label": "Следующая атака +50%, CE реген -40%",
     },
+    "Пакт усердия": {
+        "post_battle_exp_multiplier": 1.5,
+        "consume_after_battle": True,
+        "label": "После боя получишь +50% опыта. Пакт исчезнет по завершении боя.",
+    },
+    "Пакт прорыва": {
+        "post_battle_exp_multiplier": 2.0,
+        "consume_after_battle": True,
+        "label": "После боя получишь +100% опыта. Пакт исчезнет по завершении боя.",
+    },
+    "Пакт просветления": {
+        "post_battle_exp_multiplier": 2.5,
+        "consume_after_battle": True,
+        "label": "После боя получишь +150% опыта. Пакт исчезнет по завершении боя.",
+    },
+    "Пакт выживания": {
+        "survive_lethal_once": True,
+        "label": "Следующий смертельный удар оставит тебя на 1 HP.",
+    },
 }
 
 PACT_EFFECTS_NORMALIZED = {

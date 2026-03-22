@@ -205,6 +205,32 @@ CURSES = [
         "points_reward": 1,
         "card_drop_chance": 15.0
     },
+    {
+        "name": "Куроуруши",
+        "description": "Особый класс. Насекомое-проклятие, расползающееся бесконечной чумой.",
+        "grade": 8,
+        "curse_type": "special",
+        "attack": 52,
+        "defense": 40,
+        "speed": 67,
+        "hp": 445,
+        "exp_reward": 145,
+        "points_reward": 1,
+        "card_drop_chance": 16.5
+    },
+    {
+        "name": "Божество оспы",
+        "description": "Особый класс. Медленно приближается, но давит чудовищной силой проклятия.",
+        "grade": 8,
+        "curse_type": "special",
+        "attack": 55,
+        "defense": 48,
+        "speed": 38,
+        "hp": 520,
+        "exp_reward": 155,
+        "points_reward": 1,
+        "card_drop_chance": 18.0
+    },
     
     # Катастрофические проклятия (9-10 уровень)
     {
@@ -234,6 +260,19 @@ CURSES = [
         "card_drop_chance": 22.0
     },
     {
+        "name": "Дагон",
+        "description": "Специальный класс. Морское проклятие, подавляющее врагов потоком воды.",
+        "grade": 9,
+        "curse_type": "disaster",
+        "attack": 60,
+        "defense": 54,
+        "speed": 76,
+        "hp": 575,
+        "exp_reward": 205,
+        "points_reward": 1,
+        "card_drop_chance": 24.0
+    },
+    {
         "name": "Махито",
         "description": "Специальный класс. Манипуляция душой.",
         "grade": 10,
@@ -258,6 +297,19 @@ CURSES = [
         "exp_reward": 500,
         "points_reward": 1,
         "card_drop_chance": 50.0
+    },
+    {
+        "name": "Наоя-проклятие",
+        "description": "Проклятый дух особого класса, превращающий скорость в смертельное оружие.",
+        "grade": 10,
+        "curse_type": "disaster",
+        "attack": 74,
+        "defense": 57,
+        "speed": 102,
+        "hp": 760,
+        "exp_reward": 320,
+        "points_reward": 1,
+        "card_drop_chance": 34.0
     },
 ]
 
