@@ -7,7 +7,6 @@ from config import ADMIN_IDS as CONFIG_ADMIN_IDS
 from models import (
     async_session,
     Battle,
-    Card,
     Clan,
     CoinTransaction,
     DailyReward,
@@ -32,7 +31,7 @@ from models import (
 )
 from utils.achievement_data import TITLES
 from utils.card_data import ALL_CARDS
-from utils.card_rewards import get_card_type_by_name
+from utils.card_rewards import get_or_create_card_template
 from utils.pvp_progression import apply_experience_with_pvp_rolls
 from utils.technique_data import ALL_TECHNIQUES
 
@@ -281,27 +280,7 @@ async def cmd_give_card(message: Message):
             await message.answer("❌ Игрок не найден.")
             return
 
-        result = await session.execute(
-            select(Card).where(Card.name == card_data["name"])
-        )
-        card_template = result.scalar_one_or_none()
-
-        if not card_template:
-            card_template = Card(
-                name=card_data["name"],
-                description=card_data.get("description"),
-                card_type=get_card_type_by_name(card_data["name"]),
-                rarity=card_data["rarity"],
-                base_attack=card_data["base_attack"],
-                base_defense=card_data["base_defense"],
-                base_speed=card_data["base_speed"],
-                base_hp=card_data["base_hp"],
-                base_ce=card_data.get("base_ce", 100),
-                ce_regen=card_data.get("ce_regen", 10),
-                growth_multiplier=card_data["growth_multiplier"],
-            )
-            session.add(card_template)
-            await session.flush()
+        card_template = await get_or_create_card_template(session, card_data)
 
         user_card = UserCard(
             user_id=target_user.id,

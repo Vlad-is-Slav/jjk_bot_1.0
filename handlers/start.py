@@ -1,16 +1,19 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from sqlalchemy import select
 
 from models import async_session, User
 from keyboards import get_main_menu
 from utils.card_rewards import grant_random_card
+from config import ADMIN_IDS
 
 router = Router()
+pending_feedback_users: set[int] = set()
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
+    pending_feedback_users.discard(message.from_user.id)
     """Обработчик команды /start"""
     async with async_session() as session:
         # Проверяем, есть ли пользователь в БД
@@ -82,6 +85,7 @@ async def cmd_start(message: Message):
 
 @router.callback_query(F.data == "main_menu")
 async def main_menu_callback(callback: CallbackQuery):
+    pending_feedback_users.discard(callback.from_user.id)
     """Возврат в главное меню"""
     async with async_session() as session:
         result = await session.execute(
@@ -135,3 +139,71 @@ async def help_callback(callback: CallbackQuery):
     from keyboards.main_menu import get_back_button
     await callback.message.edit_text(help_text, reply_markup=get_back_button(), parse_mode="HTML")
     await callback.answer()
+
+
+@router.callback_query(F.data == "feedback_menu")
+async def feedback_menu_callback(callback: CallbackQuery):
+    if not ADMIN_IDS:
+        await callback.answer("Сейчас обратная связь недоступна: не задан ADMIN_IDS.", show_alert=True)
+        return
+
+    pending_feedback_users.add(callback.from_user.id)
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="feedback_cancel")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")],
+        ]
+    )
+    await callback.message.edit_text(
+        "💬 <b>Обратная связь</b>\n\n"
+        "Напиши одним сообщением баг, идею для обновления или пожелание.\n"
+        "Текст будет отправлен администраторам в личные сообщения.",
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "feedback_cancel")
+async def feedback_cancel_callback(callback: CallbackQuery):
+    pending_feedback_users.discard(callback.from_user.id)
+    await main_menu_callback(callback)
+
+
+@router.message(F.text, ~F.text.startswith("/"), lambda message: message.from_user.id in pending_feedback_users)
+async def feedback_input_handler(message: Message):
+    pending_feedback_users.discard(message.from_user.id)
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer("Сообщение пустое. Попробуй ещё раз через кнопку обратной связи.")
+        return
+
+    username = f"@{message.from_user.username}" if message.from_user.username else "без username"
+    payload = (
+        "💬 <b>Новое сообщение из обратной связи</b>\n\n"
+        f"👤 Пользователь: {message.from_user.first_name or 'Игрок'}\n"
+        f"🆔 Telegram ID: <code>{message.from_user.id}</code>\n"
+        f"🔗 Username: {username}\n\n"
+        f"📝 Текст:\n{text}"
+    )
+
+    delivered = 0
+    for admin_id in ADMIN_IDS:
+        try:
+            await message.bot.send_message(admin_id, payload, parse_mode="HTML")
+            delivered += 1
+        except Exception:
+            continue
+
+    if delivered:
+        await message.answer(
+            "✅ Сообщение отправлено. Спасибо, это поможет быстрее ловить баги и собирать идеи.",
+            reply_markup=get_main_menu(),
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            "⚠️ Не удалось доставить сообщение администраторам. Попробуй чуть позже.",
+            reply_markup=get_main_menu(),
+            parse_mode="HTML",
+        )

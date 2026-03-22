@@ -144,6 +144,7 @@ def _profile_customization_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="♻️ Сбросить аватар", callback_data="profile_avatar_clear"),
                 InlineKeyboardButton(text="♻️ Сбросить цитату", callback_data="profile_quote_clear"),
             ],
+            [InlineKeyboardButton(text="🏷 Титулы", callback_data="my_titles")],
             [InlineKeyboardButton(text="🔙 В профиль", callback_data="profile")],
         ]
     )

@@ -5,6 +5,26 @@ def _format_ce_cost(cost: int) -> str:
     return "бесплатно" if not cost else f"{cost} CE"
 
 
+def _number_emoji(value: int) -> str:
+    return {
+        1: "1️⃣",
+        2: "2️⃣",
+        3: "3️⃣",
+        4: "4️⃣",
+    }.get(int(value), str(value))
+
+
+def _choice_rows(prefix: str, options: list[int]) -> list[list[InlineKeyboardButton]]:
+    buttons = [
+        InlineKeyboardButton(text=_number_emoji(option), callback_data=f"{prefix}_{option}")
+        for option in options
+    ]
+    rows: list[list[InlineKeyboardButton]] = []
+    for index in range(0, len(buttons), 2):
+        rows.append(buttons[index:index + 2])
+    return rows
+
+
 def get_pvp_menu():
     """Меню PvP."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -79,17 +99,58 @@ def get_pvp_battle_keyboard(
     rows = []
 
     if force_response:
+        if action_state.get("target_selection"):
+            rows.append([
+                InlineKeyboardButton(
+                    text=action_state.get("target_prompt", "🎯 Выбери цель атаки"),
+                    callback_data="noop",
+                )
+            ])
+            target_buttons = []
+            if action_state.get("can_target_main", True):
+                target_buttons.append(
+                    InlineKeyboardButton(text="🃏 Главная карта", callback_data="pvp_action_target_main")
+                )
+            if action_state.get("can_target_shikigami", False):
+                target_buttons.append(
+                    InlineKeyboardButton(text="🐺 Шикигами", callback_data="pvp_action_target_shikigami")
+                )
+            if target_buttons:
+                rows.append(target_buttons[:2])
+                if len(target_buttons) > 2:
+                    rows.append(target_buttons[2:])
+            rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="pvp_action_target_back")])
+            return InlineKeyboardMarkup(inline_keyboard=rows)
+
+        if action_state.get("special_variant_key"):
+            rows.append([InlineKeyboardButton(text="⚙️ Выбери вариант техники", callback_data="noop")])
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"⚪ Обычный ({action_state.get('special_variant_base_cost', 0)} CE)",
+                    callback_data=f"pvp_action_special_pick_{action_state['special_variant_key']}_base",
+                ),
+                InlineKeyboardButton(
+                    text=f"⚡ Усиленный ({action_state.get('special_variant_amp_cost', 0)} CE)",
+                    callback_data=f"pvp_action_special_pick_{action_state['special_variant_key']}_amp",
+                ),
+            ])
+            rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="pvp_action_special_variant_back")])
+            return InlineKeyboardMarkup(inline_keyboard=rows)
+
         battlerdan_stage = action_state.get("battlerdan_stage")
         if battlerdan_stage:
-            options = action_state.get("battlerdan_options", [1, 2, 3])
-            prefix = "pvp_action_battlerdan_choose" if battlerdan_stage == "choose" else "pvp_action_battlerdan_guess"
-            label = "🗣 Выбери аргумент" if battlerdan_stage == "choose" else "❓ Угадай ответ"
+            options = action_state.get("battlerdan_options", [1, 2, 3, 4])
+            if battlerdan_stage == "topic":
+                prefix = "pvp_action_battlerdan_topic"
+                label = "📚 Выбери тему"
+            elif battlerdan_stage == "choose":
+                prefix = "pvp_action_battlerdan_choose"
+                label = "🗣 Выбери правду"
+            else:
+                prefix = "pvp_action_battlerdan_guess"
+                label = "❓ Угадай ответ"
             rows.append([InlineKeyboardButton(text=label, callback_data="noop")])
-            rows.append([
-                InlineKeyboardButton(text="1️⃣", callback_data=f"{prefix}_1"),
-                InlineKeyboardButton(text="2️⃣", callback_data=f"{prefix}_2"),
-                InlineKeyboardButton(text="3️⃣", callback_data=f"{prefix}_3"),
-            ])
+            rows.extend(_choice_rows(prefix, options))
             return InlineKeyboardMarkup(inline_keyboard=rows)
 
         response_buttons = []
@@ -122,15 +183,38 @@ def get_pvp_battle_keyboard(
 
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
-    if action_state.get("can_attack", True):
+    if action_state.get("can_main_attack", True):
         rows.append([InlineKeyboardButton(text="👊 Удар рукой", callback_data="pvp_action_basic")])
 
+    if action_state.get("can_shikigami_attack", False):
+        shikigami = (fighter_state or {}).get("shikigami")
+        shikigami_name = (
+            shikigami.card_template.name
+            if shikigami and getattr(shikigami, "card_template", None)
+            else "Шикигами"
+        )
+        rows.append([
+            InlineKeyboardButton(
+                text=f"🐺 Атака {shikigami_name}",
+                callback_data="pvp_action_shikigami_basic",
+            )
+        ])
+
     if action_state.get("can_sword", False):
-        rows.append([InlineKeyboardButton(text="⚖️ Золотой меч", callback_data="pvp_action_higuruma_sword")])
+        sword_name = "Золотая правда" if fighter_state and fighter_state.get("is_battlerdan") else "Золотой меч"
+        rows.append([InlineKeyboardButton(text=f"⚖️ {sword_name}", callback_data="pvp_action_higuruma_sword")])
 
     if action_state.get("can_special", True):
         specials = (fighter_state or {}).get("specials", [])
         for special in specials:
+            if special.get("variants"):
+                rows.append([
+                    InlineKeyboardButton(
+                        text=f"{special['icon']} {special['name']}",
+                        callback_data=f"pvp_action_special_menu_{special['key']}",
+                    )
+                ])
+                continue
             rows.append([
                 InlineKeyboardButton(
                     text=f"{special['icon']} {special['name']} ({special['ce_cost']} CE)",

@@ -25,7 +25,10 @@ def get_main_menu():
                 InlineKeyboardButton(text="👥 Друзья", callback_data="friends"),
                 InlineKeyboardButton(text="🏯 Кланы", callback_data="clans_menu"),
             ],
-            [InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
+            [
+                InlineKeyboardButton(text="💬 Обратная связь", callback_data="feedback_menu"),
+                InlineKeyboardButton(text="❓ Помощь", callback_data="help"),
+            ],
         ]
     )
     return keyboard
@@ -41,9 +44,12 @@ def get_profile_menu():
             ],
             [
                 InlineKeyboardButton(text="🏆 Достижения", callback_data="achievements"),
-                InlineKeyboardButton(text="⚙️ Сложность", callback_data="difficulty_menu"),
+                InlineKeyboardButton(text="🏷 Титулы", callback_data="my_titles"),
             ],
-            [InlineKeyboardButton(text="🖼 Аватар", callback_data="profile_show_avatar")],
+            [
+                InlineKeyboardButton(text="⚙️ Сложность", callback_data="difficulty_menu"),
+                InlineKeyboardButton(text="🖼 Аватар", callback_data="profile_show_avatar"),
+            ],
             [InlineKeyboardButton(text="🖼 Оформление", callback_data="profile_customization")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")],
         ]

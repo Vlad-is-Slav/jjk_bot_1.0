@@ -1,4 +1,5 @@
 ﻿import random
+from copy import deepcopy
 from datetime import datetime, timedelta
 
 from aiogram import Router, F
@@ -22,6 +23,20 @@ from utils.weapon_effects import get_weapon_effect
 from utils.pact_effects import get_pact_effect
 from utils.black_flash import get_black_flash_chance
 from utils.card_rewards import is_weapon_template
+from utils.combat_content import (
+    BATTLERDAN_DEBATES,
+    BATTLE_CE_MIN,
+    BATTLE_CE_REGEN_MIN,
+    BATTLE_CE_REGEN_SCALE,
+    BATTLE_CE_SCALE,
+    BATTLE_DOMAIN_COST,
+    BATTLE_MAHORAGA_COST,
+    BATTLE_RCT_COST,
+    MAHORAGA_REPEAT_ADAPT_BONUS,
+    MAHORAGA_TURN_ADAPT_STEP,
+    get_battlerdan_debate,
+    get_battlerdan_option,
+)
 from handlers.achievements import check_achievements
 from utils.clan_progression import (
     CLAN_EXP_PER_PVP_LOSS,
@@ -52,7 +67,7 @@ DEFAULT_SIMPLE_DOMAIN_DURATION = 2
 PVP_COOLDOWN_SECONDS = PVP_COOLDOWN
 PVP_MATCHMAKING_TIMEOUT = timedelta(minutes=3)
 PVP_CHALLENGE_INPUT_TIMEOUT = timedelta(minutes=5)
-MAHORAGA_ADAPT_COST = 2000
+MAHORAGA_ADAPT_COST = BATTLE_MAHORAGA_COST
 DOMAIN_UPKEEP_PER_TURN = 500
 
 
@@ -64,9 +79,60 @@ CHARACTER_PROFILES = [
         "domain_damage_bonus": 0.30,
         "domain_effect": "gojo_crit",
         "specials": [
-            {"key": "blue", "name": "Синий", "icon": "🔵", "ce_cost": 700, "multiplier": 1.25, "flat": 120},
-            {"key": "red", "name": "Красный", "icon": "🔴", "ce_cost": 1000, "multiplier": 1.5, "flat": 220},
-            {"key": "purple", "name": "Фиолетовый", "icon": "🟣", "ce_cost": 5000, "multiplier": 2.5, "flat": 500},
+            {
+                "key": "blue",
+                "name": "Синий",
+                "icon": "🔵",
+                "ce_cost": 900,
+                "multiplier": 1.25,
+                "flat": 120,
+                "variants": {
+                    "amp": {
+                        "name": "Усиленный синий",
+                        "ce_cost": 1500,
+                        "multiplier": 1.5,
+                        "flat": 220,
+                        "can_dodge": False,
+                        "aoe": True,
+                    }
+                },
+            },
+            {
+                "key": "red",
+                "name": "Красный",
+                "icon": "🔴",
+                "ce_cost": 2600,
+                "multiplier": 1.6,
+                "flat": 260,
+                "variants": {
+                    "amp": {
+                        "name": "Усиленный красный",
+                        "ce_cost": 3600,
+                        "multiplier": 1.9,
+                        "flat": 360,
+                    }
+                },
+            },
+            {
+                "key": "purple",
+                "name": "Фиолетовый",
+                "icon": "🟣",
+                "ce_cost": 6200,
+                "multiplier": 2.7,
+                "flat": 580,
+                "variants": {
+                    "amp": {
+                        "name": "Усиленный фиолетовый",
+                        "ce_cost": 9000,
+                        "multiplier": 3.25,
+                        "flat": 840,
+                        "can_dodge": False,
+                        "aoe": True,
+                        "critical": True,
+                        "critical_multiplier": 1.35,
+                    }
+                },
+            },
         ],
     },
     {
@@ -131,9 +197,9 @@ CHARACTER_PROFILES = [
         "domain_damage_bonus": 0.00,
         "domain_effect": "battlerdan_debate",
         "specials": [
-            {"key": "battle_blue", "name": "Синие клинья", "icon": "🔵", "ce_cost": 700, "multiplier": 1.25, "flat": 120},
-            {"key": "battle_red", "name": "Красный ключ", "icon": "🔴", "ce_cost": 1000, "multiplier": 1.5, "flat": 220},
-            {"key": "battle_bombs", "name": "Маленькие бомбочки", "icon": "💣", "ce_cost": 0, "multiplier": 0.7, "flat": 40},
+            {"key": "battle_blue", "name": "Синяя правда", "icon": "🔵", "ce_cost": 700, "multiplier": 1.25, "flat": 120},
+            {"key": "battle_red", "name": "Красная правда", "icon": "🔴", "ce_cost": 1000, "multiplier": 1.5, "flat": 220},
+            {"key": "battle_bombs", "name": "Маленькие бомбочки", "icon": "🤏💣", "ce_cost": 0, "multiplier": 0.7, "flat": 40},
         ],
     },
     {
@@ -148,13 +214,92 @@ CHARACTER_PROFILES = [
             {"key": "white", "name": "Белый", "icon": "⚪", "ce_cost": 5000, "multiplier": 2.5, "flat": 500},
         ],
     },
+    {
+        "tokens": ["дагон", "dagon"],
+        "domain_name": "Горизонт плена скандхи",
+        "domain_dot_pct": 0.17,
+        "domain_damage_bonus": 0.26,
+        "domain_effect": "dot",
+        "specials": [
+            {"key": "tidal", "name": "Приливный обвал", "icon": "🌊", "ce_cost": 1700, "multiplier": 1.65, "flat": 250},
+            {"key": "swarm", "name": "Стая глубин", "icon": "🦑", "ce_cost": 2600, "multiplier": 2.05, "flat": 360, "aoe": True},
+        ],
+    },
+    {
+        "tokens": ["ханами", "hanami"],
+        "domain_name": "Цветущий гнев",
+        "domain_dot_pct": 0.14,
+        "domain_damage_bonus": 0.22,
+        "domain_effect": "dot",
+        "domain_slow_pct": 0.18,
+        "specials": [
+            {"key": "roots", "name": "Корни-ловушки", "icon": "🌿", "ce_cost": 1100, "multiplier": 1.45, "flat": 180, "can_dodge": False},
+            {"key": "blossom", "name": "Цветочный обвал", "icon": "🌸", "ce_cost": 1800, "multiplier": 1.75, "flat": 260},
+        ],
+    },
+    {
+        "tokens": ["дзёго", "джого", "jogo"],
+        "domain_name": "Гроб стальной горы",
+        "domain_dot_pct": 0.16,
+        "domain_damage_bonus": 0.28,
+        "domain_effect": "gojo_crit",
+        "specials": [
+            {"key": "ember", "name": "Вулканический залп", "icon": "🔥", "ce_cost": 1400, "multiplier": 1.55, "flat": 220},
+            {"key": "eruption", "name": "Извержение", "icon": "🌋", "ce_cost": 2400, "multiplier": 2.0, "flat": 340, "aoe": True},
+        ],
+    },
+    {
+        "tokens": ["махито", "mahito"],
+        "domain_name": "Самовоплощение идеала",
+        "domain_dot_pct": 0.18,
+        "domain_damage_bonus": 0.31,
+        "domain_effect": "soul_dot",
+        "specials": [
+            {"key": "idle_touch", "name": "Преобразование души", "icon": "🫳", "ce_cost": 1900, "multiplier": 1.8, "flat": 290, "can_dodge": False},
+            {"key": "distortion", "name": "Искажённый обвал", "icon": "🧬", "ce_cost": 3100, "multiplier": 2.2, "flat": 420},
+        ],
+    },
+    {
+        "tokens": ["кендзяку", "kenjaku"],
+        "domain_name": "Чрево поглощённых проклятий",
+        "domain_dot_pct": 0.19,
+        "domain_damage_bonus": 0.33,
+        "domain_effect": "dot",
+        "specials": [
+            {"key": "gravity", "name": "Гравитационный обвал", "icon": "🪐", "ce_cost": 2200, "multiplier": 1.95, "flat": 320},
+            {"key": "uzumaki", "name": "Узумаки", "icon": "🌀", "ce_cost": 3600, "multiplier": 2.45, "flat": 520, "aoe": True},
+        ],
+    },
+    {
+        "tokens": ["ураумэ", "uraume"],
+        "domain_name": "Ледяная камера",
+        "domain_dot_pct": 0.12,
+        "domain_damage_bonus": 0.18,
+        "domain_effect": "dot",
+        "domain_slow_pct": 0.18,
+        "specials": [
+            {"key": "frost_lance", "name": "Морозное копьё", "icon": "❄️", "ce_cost": 1100, "multiplier": 1.55, "flat": 220, "can_dodge": False},
+            {"key": "icefall", "name": "Ледопад", "icon": "🧊", "ce_cost": 2200, "multiplier": 1.85, "flat": 320, "aoe": True},
+        ],
+    },
+    {
+        "tokens": ["кашимо", "хадзимэ", "kashimo", "hajime"],
+        "domain_name": "Поле грома",
+        "domain_dot_pct": 0.13,
+        "domain_damage_bonus": 0.24,
+        "domain_effect": "soul_dot",
+        "specials": [
+            {"key": "lightning_bolt", "name": "Громовой разряд", "icon": "⚡", "ce_cost": 1000, "multiplier": 1.6, "flat": 220, "can_dodge": False},
+            {"key": "amber_beast", "name": "Мифический зверь: Янтарь", "icon": "🟨", "ce_cost": 3600, "multiplier": 2.35, "flat": 480, "can_dodge": False, "critical": True, "critical_multiplier": 1.25},
+        ],
+    },
 ]
 
 
 DEFAULT_PROFILE = {
     "domain_name": "Расширение территории",
-    "domain_dot_pct": 0.10,
-    "domain_damage_bonus": 0.20,
+    "domain_dot_pct": 0,
+    "domain_damage_bonus": 0,
     "domain_effect": "dot",
     "specials": [],
 }
@@ -171,6 +316,7 @@ TECH_BLOOD = "Кровавая Магия"
 TECH_SUKUNA_CURSE = "Проклятие Сукуны"
 TECH_INFINITY = "Бесконечность"
 TECH_SIX_EYES = "Шесть Глаз"
+TECH_DOMAIN_AMPLIFICATION = "Растяжение территории"
 
 
 def _find_battle_by_user_tg(telegram_id: int):
@@ -399,15 +545,78 @@ def _is_user_turn(battle: dict, tg_id: int) -> bool:
     return battle["current_player"] == _player_num_by_tg(battle, tg_id)
 
 
+def _default_turn_flags() -> dict:
+    return {
+        "main_attack_used": False,
+        "shikigami_attack_used": False,
+        "rct_used": False,
+        "mahoraga_used": False,
+    }
+
+
 def _get_turn_flags(battle: dict, player_num: int) -> dict:
     turn_flags = battle.setdefault("turn_flags", {})
     if player_num not in turn_flags:
-        turn_flags[player_num] = {"attack_used": False, "rct_used": False, "mahoraga_used": False}
+        turn_flags[player_num] = _default_turn_flags()
+    else:
+        turn_flags[player_num].setdefault("main_attack_used", bool(turn_flags[player_num].get("attack_used", False)))
+        turn_flags[player_num].setdefault("shikigami_attack_used", False)
+        turn_flags[player_num].setdefault("rct_used", False)
+        turn_flags[player_num].setdefault("mahoraga_used", False)
     return turn_flags[player_num]
 
 
 def _reset_turn_flags(battle: dict, player_num: int):
-    battle.setdefault("turn_flags", {})[player_num] = {"attack_used": False, "rct_used": False, "mahoraga_used": False}
+    battle.setdefault("turn_flags", {})[player_num] = _default_turn_flags()
+
+
+def _main_attack_used(flags: dict) -> bool:
+    return bool(flags.get("main_attack_used", flags.get("attack_used", False)))
+
+
+def _living_shikigami(state: dict) -> UserCard | None:
+    shikigami = state.get("shikigami")
+    if shikigami and shikigami.is_alive():
+        return shikigami
+    return None
+
+
+def _entity_card(state: dict, unit: str = "main") -> UserCard | None:
+    if unit == "shikigami":
+        return _living_shikigami(state)
+    return state["main"]
+
+
+def _entity_name(state: dict, unit: str = "main") -> str:
+    card = state.get("main") if unit == "main" else state.get("shikigami")
+    if card and getattr(card, "card_template", None) and card.card_template.name:
+        return card.card_template.name
+    return "цель"
+
+
+def _entity_display_label(state: dict, unit: str = "main") -> str:
+    if unit == "shikigami":
+        return f"шикигами { _entity_name(state, unit) }"
+    return _entity_name(state, unit)
+
+
+def _entity_speed(state: dict, unit: str = "main") -> int:
+    card = _entity_card(state, unit)
+    if not card:
+        return 0
+    return max(1, int(card.speed))
+
+
+def _team_speed(state: dict) -> int:
+    return max(_entity_speed(state, "main"), _entity_speed(state, "shikigami"))
+
+
+def _has_active_mahoraga(state: dict) -> bool:
+    if not state.get("has_mahoraga", False):
+        return False
+    if state.get("mahoraga_requires_shikigami") and not _living_shikigami(state):
+        return False
+    return True
 
 
 def _pending_response_for(battle: dict, player_num: int) -> dict | None:
@@ -421,20 +630,108 @@ def _pending_battlerdan_for(battle: dict, player_num: int) -> dict | None:
     pending = battle.get("battlerdan_pending")
     if not pending:
         return None
-    if pending.get("stage") == "choose" and pending.get("owner") == player_num:
+    if pending.get("stage") in {"topic", "choose"} and pending.get("owner") == player_num:
         return pending
     if pending.get("stage") == "guess" and pending.get("target") == player_num:
         return pending
     return None
 
 
+def _pending_special_variant_for(battle: dict, player_num: int) -> str | None:
+    pending = battle.get("pending_special_variant") or {}
+    return pending.get(player_num)
+
+
+def _set_pending_special_variant(battle: dict, player_num: int, key: str):
+    battle.setdefault("pending_special_variant", {})[player_num] = key
+
+
+def _clear_pending_special_variant(battle: dict, player_num: int):
+    pending = battle.get("pending_special_variant")
+    if not pending:
+        return
+    pending.pop(player_num, None)
+    if not pending:
+        battle["pending_special_variant"] = {}
+
+
+def _pending_target_for(battle: dict, player_num: int) -> dict | None:
+    pending = battle.get("pending_target") or {}
+    return pending.get(player_num)
+
+
+def _set_pending_target(battle: dict, player_num: int, payload: dict):
+    battle.setdefault("pending_target", {})[player_num] = payload
+
+
+def _clear_pending_target(battle: dict, player_num: int):
+    pending = battle.get("pending_target")
+    if not pending:
+        return
+    pending.pop(player_num, None)
+    if not pending:
+        battle["pending_target"] = {}
+
+
+def _find_special(state: dict, key: str) -> dict | None:
+    return next((sp for sp in state.get("specials", []) if sp.get("key") == key), None)
+
+
+def _resolve_special_instance(special: dict, variant: str | None = None) -> dict:
+    resolved = dict(special)
+    if variant and variant != "base":
+        payload = dict((special.get("variants") or {}).get(variant, {}))
+        if payload:
+            resolved.update(payload)
+            resolved["variant"] = variant
+    return resolved
+
+
+def _mahoraga_percent(value: float) -> int:
+    return int(max(0.0, min(1.0, float(value or 0.0))) * 100)
+
+
+def _apply_mahoraga_turn_growth(battle: dict, player_num: int):
+    state = battle["fighters"][player_num]
+    if not _has_active_mahoraga(state) or not state.get("mahoraga_ready"):
+        return
+
+    adapt_map = state.setdefault("mahoraga_adapt", {})
+    labels = state.setdefault("mahoraga_adapt_labels", {})
+    updated = []
+    for attack_key, current in list(adapt_map.items()):
+        if current >= 1.0:
+            continue
+        new_value = min(1.0, float(current) + MAHORAGA_TURN_ADAPT_STEP)
+        if new_value <= current:
+            continue
+        adapt_map[attack_key] = new_value
+        label = labels.get(attack_key, "атака")
+        updated.append(f"🌀 Адаптация Махораги к «{label}» выросла до {_mahoraga_percent(new_value)}%.")
+
+    battle["log"].extend(updated)
+
+
+def _battlerdan_topic_ids() -> list[int]:
+    return [int(debate.get("id", 0)) for debate in BATTLERDAN_DEBATES]
+
+
+def _battlerdan_options(topic_id: int) -> list[int]:
+    debate = get_battlerdan_debate(topic_id)
+    if not debate:
+        return []
+    return [int(option.get("id", 0)) for option in debate.get("options", [])]
+
+
 def _resolve_battlerdan_guess(battle: dict, pending: dict, guessed: int):
     owner_num = pending.get("owner")
     target_num = pending.get("target")
     choice = pending.get("choice")
+    topic_id = pending.get("topic_id")
     owner_state = battle["fighters"][owner_num]
     owner_name = owner_state["main"].card_template.name
     target_name = battle["fighters"][target_num]["main"].card_template.name
+    guessed_option = get_battlerdan_option(topic_id, guessed)
 
     if guessed == choice:
         owner_state["ce"] = 0
@@ -445,18 +742,46 @@ def _resolve_battlerdan_guess(battle: dict, pending: dict, guessed: int):
     else:
         owner_state["higuruma_sword_ready"] = True
         battle["log"].append(
-            f"⚖️ Дебаты: {target_name} ошибся. {owner_name} получает Золотой меч."
+            f"⚖️ Дебаты: {target_name} ошибся. {owner_name} раскрывает Золотую правду."
         )
+        if guessed_option and guessed_option.get("refutation"):
+            battle["log"].append(str(guessed_option["refutation"]))
 
 
 def _get_action_state(battle: dict, player_num: int) -> dict:
     fighter_state = battle["fighters"][player_num]
+    pending_special = _pending_special_variant_for(battle, player_num)
+    if pending_special:
+        special = _find_special(fighter_state, pending_special)
+        if special and special.get("variants"):
+            amp = (special.get("variants") or {}).get("amp", {})
+            return {
+                "force_response": True,
+                "special_variant_key": special.get("key"),
+                "special_variant_base_cost": int(special.get("ce_cost", 0)),
+                "special_variant_amp_cost": int(amp.get("ce_cost", special.get("ce_cost", 0))),
+                "show_end_turn": False,
+            }
+        _clear_pending_special_variant(battle, player_num)
+
+    pending_target = _pending_target_for(battle, player_num)
+    if pending_target:
+        enemy_state = battle["fighters"][_enemy_num(player_num)]
+        return {
+            "force_response": True,
+            "target_selection": True,
+            "target_prompt": pending_target.get("prompt", "Выбери цель атаки."),
+            "can_target_main": True,
+            "can_target_shikigami": bool(_living_shikigami(enemy_state)),
+            "show_end_turn": False,
+        }
+
     pending_battlerdan = _pending_battlerdan_for(battle, player_num)
     if pending_battlerdan:
         return {
             "force_response": True,
             "battlerdan_stage": pending_battlerdan.get("stage"),
-            "battlerdan_options": pending_battlerdan.get("options", [1, 2, 3]),
+            "battlerdan_options": pending_battlerdan.get("options", [1, 2, 3, 4]),
             "show_end_turn": False,
         }
     pending = _pending_response_for(battle, player_num)
@@ -477,16 +802,18 @@ def _get_action_state(battle: dict, player_num: int) -> dict:
     flags = _get_turn_flags(battle, player_num)
     simple_active = fighter_state.get("simple_domain_turns", 0) > 0
 
-    can_attack = not flags.get("attack_used", False)
-    can_special = can_attack and not simple_active
+    can_main_attack = not _main_attack_used(flags)
+    can_special = can_main_attack and not simple_active
 
     can_simple = fighter_state.get("has_simple_domain", False) and not simple_active
     can_mahoraga = _can_use_mahoraga(battle, player_num, flags)
-    can_sword = fighter_state.get("higuruma_sword_ready", False) and not flags.get("attack_used", False)
+    can_sword = fighter_state.get("higuruma_sword_ready", False) and not _main_attack_used(flags)
+    can_shikigami_attack = bool(_living_shikigami(fighter_state)) and not flags.get("shikigami_attack_used", False)
 
     return {
         "force_response": False,
-        "can_attack": can_attack,
+        "can_main_attack": can_main_attack,
+        "can_shikigami_attack": can_shikigami_attack,
         "can_special": can_special,
         "can_domain": fighter_state.get("has_domain", False),
         "can_simple": can_simple,
@@ -498,9 +825,7 @@ def _get_action_state(battle: dict, player_num: int) -> dict:
 
 
 def _get_fighter_speed(state: dict) -> int:
-    main = state["main"]
-    shikigami = state.get("shikigami")
-    return int(main.speed + (shikigami.speed if shikigami else 0))
+    return _team_speed(state)
 
 
 def _get_domain_slow_pct(battle: dict, attacker_num: int, defender_num: int) -> float:
@@ -521,9 +846,11 @@ def _dodge_chance(
     defender_state: dict,
     attacker_num: int,
     defender_num: int,
+    attacker_unit: str = "main",
+    defender_unit: str = "main",
 ) -> float:
-    attacker_speed = max(1, _get_fighter_speed(attacker_state))
-    defender_speed = _get_fighter_speed(defender_state)
+    attacker_speed = max(1, _entity_speed(attacker_state, attacker_unit))
+    defender_speed = _entity_speed(defender_state, defender_unit)
     slow_pct = _get_domain_slow_pct(battle, attacker_num, defender_num)
     if slow_pct:
         defender_speed = max(1, int(defender_speed * (1 - slow_pct)))
@@ -548,7 +875,7 @@ def _is_guaranteed_hit(battle: dict, attacker_num: int, defender_num: int) -> bo
 
 def _can_use_mahoraga(battle: dict, player_num: int, flags: dict | None = None) -> bool:
     state = battle["fighters"][player_num]
-    if not state.get("has_mahoraga", False):
+    if not _has_active_mahoraga(state):
         return False
     flags = flags or _get_turn_flags(battle, player_num)
     if flags.get("mahoraga_used", False):
@@ -563,12 +890,7 @@ def _can_use_mahoraga(battle: dict, player_num: int, flags: dict | None = None) 
 
 
 def _get_base_damage(state: dict) -> int:
-    damage = state["main"].attack
-    shikigami = state.get("shikigami")
-    if shikigami:
-        shikigami_mult = float(state.get("shikigami_damage_mult", 0.5))
-        damage += int(shikigami.attack * shikigami_mult)
-    damage = int(damage * state.get("attack_multiplier", 1.0))
+    damage = int(state["main"].attack * state.get("attack_multiplier", 1.0))
     return max(1, damage)
 
 def _domain_attack_bonus(battle: dict, attacker_num: int, defender_num: int | None = None) -> float:
@@ -592,33 +914,26 @@ def _apply_mahoraga_adaptation(
     if not attack_key:
         return
     defender_state = battle["fighters"][defender_num]
-    if not defender_state.get("has_mahoraga") or not defender_state.get("mahoraga_ready"):
+    if not _has_active_mahoraga(defender_state) or not defender_state.get("mahoraga_ready"):
         return
 
     adapt_map = defender_state.setdefault("mahoraga_adapt", {})
-    current = float(adapt_map.get(attack_key, 0))
+    label_map = defender_state.setdefault("mahoraga_adapt_labels", {})
+    seen_before = attack_key in adapt_map
+    current = float(adapt_map.get(attack_key, 0.0))
     label = attack_label or "атака"
-    main = defender_state["main"]
+    label_map[attack_key] = label
 
-    if current <= 0:
-        heal = int(dealt_damage * 0.5)
-        main.hp = min(main.max_hp, main.hp + heal)
-        adapt_map[attack_key] = 0.5
+    if not seen_before:
+        adapt_map[attack_key] = 0.0
+        battle["log"].append(f"🌀 Махорага начал анализ атаки «{label}».")
+        return
+
+    new_value = min(1.0, current + MAHORAGA_REPEAT_ADAPT_BONUS)
+    adapt_map[attack_key] = new_value
+    if new_value > current:
         battle["log"].append(
-            f"🌀 Махорага адаптируется к атаке «{label}»: -50% урона."
-        )
-    elif current < 1.0:
-        heal = int(dealt_damage)
-        main.hp = min(main.max_hp, main.hp + heal)
-        adapt_map[attack_key] = 1.0
-        battle["log"].append(
-            f"🌀 Махорага полностью адаптировался к «{label}» (100%)."
-        )
-    else:
-        heal = int(dealt_damage)
-        main.hp = min(main.max_hp, main.hp + heal)
-        battle["log"].append(
-            f"🌀 Махорага блокирует «{label}» (100%)."
+            f"🌀 Повтор техники ускоряет адаптацию Махораги к «{label}» до {_mahoraga_percent(new_value)}%."
         )
 
 
@@ -632,14 +947,20 @@ def _deal_damage(
     attack_key: str | None = None,
     attack_label: str | None = None,
     can_dodge: bool = True,
+    target: str = "main",
+    attacker_unit: str = "main",
 ) -> tuple[int, bool, float, bool]:
     attacker_state = battle["fighters"][attacker_num]
     defender_state = battle["fighters"][defender_num]
+    defender_card = _entity_card(defender_state, target)
+    if not defender_card or not defender_card.is_alive():
+        return 0, False, 0.0, False
 
-    if attack_key and defender_state.get("has_mahoraga") and defender_state.get("mahoraga_ready"):
+    mahoraga_progress = 0.0
+    if attack_key and _has_active_mahoraga(defender_state) and defender_state.get("mahoraga_ready"):
         adapt_map = defender_state.setdefault("mahoraga_adapt", {})
-        current = float(adapt_map.get(attack_key, 0))
-        if current >= 1.0:
+        mahoraga_progress = float(adapt_map.get(attack_key, 0.0))
+        if mahoraga_progress >= 1.0:
             label = attack_label or "атака"
             battle["log"].append(f"🌀 Махорага блокирует «{label}» (100%).")
             return 0, False, 0.0, False
@@ -648,24 +969,43 @@ def _deal_damage(
         defender_state["block_next_hits"] -= 1
         return 0, False, 0.0, True
 
+    guaranteed_hit = _is_guaranteed_hit(battle, attacker_num, defender_num)
     infinity_chance = float(defender_state.get("infinity_chance", 0.0) or 0.0)
-    if infinity_chance > 0 and not ignore_infinity:
-        if random.random() < infinity_chance:
-            battle["log"].append("∞ Бесконечность блокирует атаку.")
-            return 0, False, 0.0, False
+    if target == "main" and infinity_chance > 0 and not ignore_infinity and not guaranteed_hit:
+        battle["log"].append("∞ Бесконечность блокирует атаку.")
+        return 0, False, 0.0, False
 
-    if can_dodge and not _is_guaranteed_hit(battle, attacker_num, defender_num):
-        chance = _dodge_chance(battle, attacker_state, defender_state, attacker_num, defender_num)
+    if can_dodge and not guaranteed_hit:
+        chance = _dodge_chance(
+            battle,
+            attacker_state,
+            defender_state,
+            attacker_num,
+            defender_num,
+            attacker_unit=attacker_unit,
+            defender_unit=target,
+        )
         if chance > 0 and random.random() < chance:
             return 0, True, chance, False
 
     attacker_bonus = _domain_attack_bonus(battle, attacker_num, defender_num)
     final_raw = max(1, int(raw_damage * attacker_bonus))
-    defender = defender_state["main"]
+    if mahoraga_progress > 0:
+        final_raw = max(1, int(final_raw * (1.0 - mahoraga_progress)))
+    before_hp = int(defender_card.hp)
     if ignore_defense:
-        dealt = defender.take_true_damage(final_raw)
+        dealt = defender_card.take_true_damage(final_raw)
     else:
-        dealt = defender.take_damage(final_raw)
+        dealt = defender_card.take_damage(final_raw)
+    if (
+        target == "main"
+        and defender_card.hp <= 0
+        and defender_state.get("survive_lethal_available", False)
+    ):
+        defender_card.hp = 1
+        defender_state["survive_lethal_available"] = False
+        dealt = max(0, before_hp - 1)
+        battle["log"].append(f"📜 Пакт выживания срабатывает: {defender_card.card_template.name} остаётся на 1 HP.")
     _apply_mahoraga_adaptation(battle, defender_num, attack_key, attack_label, dealt)
     return dealt, False, 0.0, False
 
@@ -682,7 +1022,7 @@ def _apply_pact_attack_bonus(attacker_state: dict, raw_damage: int) -> tuple[int
 
 def _domain_power(state: dict) -> int:
     main = state["main"]
-    shikigami = state.get("shikigami")
+    shikigami = _living_shikigami(state)
     support_bonus = (shikigami.attack + shikigami.defense) // 3 if shikigami else 0
     domain_level = state.get("domain_level", 0)
     return (
@@ -711,16 +1051,26 @@ def _format_fighter_line(prefix: str, state: dict) -> str:
     shikigami = state.get("shikigami")
     weapon2 = state.get("weapon2")
     weapon_name = weapon.card_template.name if weapon and weapon.card_template else "—"
-    shikigami_name = shikigami.card_template.name if shikigami and shikigami.card_template else "—"
     weapon2_name = weapon2.card_template.name if weapon2 and weapon2.card_template else "—"
-    support_line = f"🗡 {weapon_name} | 🗡 {weapon2_name}" if weapon2 else f"🗡 {weapon_name} | 🐺 {shikigami_name}"
-    return (
+    support_line = f"🗡 {weapon_name} | 🗡 {weapon2_name}" if weapon2 else f"🗡 {weapon_name}"
+    text = (
         f"{prefix} {state['main'].card_template.name}\n"
         f"{title_line}"
         f"{support_line}\n"
         f"❤️ {state['main'].hp}/{state['main'].max_hp} | "
-        f"💧 {state['ce']}/{state['max_ce']}{simple_text}\n"
+        f"💧 {state['ce']}/{state['max_ce']}{simple_text} | "
+        f"⚔️ {state['main'].attack} | 🛡 {state['main'].defense} | 💨 {state['main'].speed}\n"
     )
+    if shikigami and shikigami.card_template:
+        if shikigami.is_alive():
+            text += (
+                f"🐺 {shikigami.card_template.name}\n"
+                f"❤️ {shikigami.hp}/{shikigami.max_hp} | "
+                f"⚔️ {shikigami.attack} | 🛡 {shikigami.defense} | 💨 {shikigami.speed}\n"
+            )
+        else:
+            text += f"☠️ {shikigami.card_template.name} повержен\n"
+    return text
 
 
 def _battle_view_text(battle: dict, viewer_tg: int) -> str:
@@ -748,12 +1098,36 @@ def _battle_view_text(battle: dict, viewer_tg: int) -> str:
     if pending:
         text += "\n\n⚠️ <b>Ответ на домен:</b> выбери Расширение или Простую территорию."
 
+    pending_special = _pending_special_variant_for(battle, viewer_num)
+    if pending_special:
+        special = _find_special(you, pending_special)
+        if special:
+            text += f"\n\n⚙️ <b>{special['name']}:</b> выбери обычный или усиленный вариант."
+
+    pending_target = _pending_target_for(battle, viewer_num)
+    if pending_target:
+        text += f"\n\n🎯 <b>{pending_target.get('prompt', 'Выбери цель атаки.')}</b>"
+
     pending_battlerdan = _pending_battlerdan_for(battle, viewer_num)
     if pending_battlerdan:
-        if pending_battlerdan.get("stage") == "choose":
-            text += "\n\n🗣 <b>Дебаты:</b> выбери аргумент."
-        elif pending_battlerdan.get("stage") == "guess":
-            text += "\n\n❓ <b>Дебаты:</b> угадай аргумент."
+        stage = pending_battlerdan.get("stage")
+        if stage == "topic":
+            themes = []
+            for debate in BATTLERDAN_DEBATES:
+                themes.append(f"{debate['id']}. {debate['question']}")
+            text += "\n\n📚 <b>Дебаты:</b> выбери тему.\n" + "\n".join(themes)
+        else:
+            debate = get_battlerdan_debate(pending_battlerdan.get("topic_id"))
+            if debate:
+                options_text = "\n".join(
+                    f"{option['id']}. {option['full_label']}" for option in debate.get("options", [])
+                )
+                prompt = "выбери правду" if stage == "choose" else "угадай правду"
+                text += (
+                    f"\n\n🗣 <b>Дебаты:</b> {debate['question']}\n"
+                    f"{options_text}\n\n"
+                    f"⚖️ Нужно {prompt}."
+                )
 
     if battle["log"]:
         last_logs = battle["log"][-5:]
@@ -837,6 +1211,8 @@ def _apply_start_turn_effects(battle: dict, player_num: int):
             battle["log"].append("🎰 Джекпот: HP восстановлены до максимума.")
         state["hakari_jackpot_turns"] = jackpot_turns - 1
 
+    _apply_mahoraga_turn_growth(battle, player_num)
+
     simple_active = state.get("simple_domain_turns", 0) > 0
     domain = battle.get("domain_state")
     pending_response = _pending_response_for(battle, player_num)
@@ -868,21 +1244,43 @@ def _apply_start_turn_effects(battle: dict, player_num: int):
             battle["log"].append("🛡 Простая территория блокирует эффект вражеской территории.")
         else:
             owner_state = battle["fighters"][domain["owner"]]
-            base_raw = int(state["main"].max_hp * domain["dot_pct"]) + int(owner_state["main"].attack * 0.25)
             effect = domain.get("effect", "dot")
-            if effect == "gojo_crit":
-                raw = int(base_raw * 2.0)
-                raw = int(raw * (1 + domain.get("damage_bonus", 0.0)))
-                dealt = state["main"].take_damage(max(1, raw))
-                battle["log"].append(f"🏯 {domain['name']} наносит критический урон: {dealt}.")
-            elif effect == "soul_dot":
-                raw = int(base_raw * (1 + domain.get("damage_bonus", 0.0)))
-                dealt = state["main"].take_true_damage(max(1, raw))
-                battle["log"].append(f"🏯 {domain['name']} бьёт по душе: {dealt} урона.")
-            else:
-                raw = int(base_raw * (1 + domain.get("damage_bonus", 0.0)))
-                dealt = state["main"].take_damage(max(1, raw))
-                battle["log"].append(f"🏯 {domain['name']} наносит {dealt} урона.")
+            targets = [("main", state["main"])]
+            shikigami = _living_shikigami(state)
+            if shikigami:
+                targets.append(("shikigami", shikigami))
+            for unit, card in targets:
+                base_raw = int(card.max_hp * domain["dot_pct"]) + int(owner_state["main"].attack * 0.25)
+                if effect == "gojo_crit":
+                    raw = int(base_raw * 2.0)
+                    raw = int(raw * (1 + domain.get("damage_bonus", 0.0)))
+                    dealt = card.take_damage(max(1, raw))
+                    if unit == "main":
+                        battle["log"].append(f"🏯 {domain['name']} наносит критический урон: {dealt}.")
+                    else:
+                        battle["log"].append(
+                            f"🏯 {domain['name']} накрывает шикигами {_entity_name(state, 'shikigami')}: {dealt} критического урона."
+                        )
+                elif effect == "soul_dot":
+                    raw = int(base_raw * (1 + domain.get("damage_bonus", 0.0)))
+                    dealt = card.take_true_damage(max(1, raw))
+                    if unit == "main":
+                        battle["log"].append(f"🏯 {domain['name']} бьёт по душе: {dealt} урона.")
+                    else:
+                        battle["log"].append(
+                            f"🏯 {domain['name']} задевает душу шикигами {_entity_name(state, 'shikigami')}: {dealt} урона."
+                        )
+                else:
+                    raw = int(base_raw * (1 + domain.get("damage_bonus", 0.0)))
+                    dealt = card.take_damage(max(1, raw))
+                    if unit == "main":
+                        battle["log"].append(f"🏯 {domain['name']} наносит {dealt} урона.")
+                    else:
+                        battle["log"].append(
+                            f"🏯 {domain['name']} задевает шикигами {_entity_name(state, 'shikigami')}: {dealt} урона."
+                        )
+                if unit == "shikigami" and not card.is_alive():
+                    battle["log"].append(f"☠️ Шикигами {_entity_name(state, 'shikigami')} повержен.")
             domain["turns_left"] -= 1
             if domain["turns_left"] <= 0:
                 battle["log"].append("🌫 Эффект территории рассеялся.")
@@ -895,6 +1293,8 @@ def _apply_start_turn_effects(battle: dict, player_num: int):
 
 
 async def _advance_turn(callback: CallbackQuery, battle: dict, acting_player_num: int):
+    _clear_pending_target(battle, acting_player_num)
+    _clear_pending_special_variant(battle, acting_player_num)
     next_player = _enemy_num(acting_player_num)
     battle["current_player"] = next_player
     battle["turn"] += 1
@@ -908,41 +1308,84 @@ async def _advance_turn(callback: CallbackQuery, battle: dict, acting_player_num
     await _update_battle_messages(callback, battle)
 
 
-def _collect_weapon_effects(*weapons: UserCard | None) -> tuple[float, bool, bool]:
-    multiplier = 1.0
-    ignore_defense = False
-    ignore_infinity = False
+def _collect_weapon_effects(*weapons: UserCard | None) -> dict[str, float | bool]:
+    effects: dict[str, float | bool] = {
+        "basic_multiplier": 1.0,
+        "ignore_defense": False,
+        "ignore_infinity": False,
+        "basic_ignore_infinity": False,
+        "ignore_dodge": False,
+        "black_flash_bonus": 0.0,
+    }
     for weapon in weapons:
         effect = get_weapon_effect(weapon)
         if not effect:
             continue
         if effect.get("type") == "basic_multiplier":
             roll = random.uniform(effect.get("min", 1.0), effect.get("max", 1.0))
-            multiplier = max(multiplier, roll)
+            effects["basic_multiplier"] = max(float(effects["basic_multiplier"]), roll)
         elif effect.get("type") == "ignore_defense":
-            ignore_defense = True
+            effects["ignore_defense"] = True
         elif effect.get("type") == "ignore_infinity":
-            ignore_infinity = True
-    return multiplier, ignore_defense, ignore_infinity
+            effects["ignore_infinity"] = True
+        elif effect.get("type") == "basic_ignore_infinity":
+            effects["basic_ignore_infinity"] = True
+        elif effect.get("type") == "ignore_dodge":
+            effects["ignore_dodge"] = True
+        elif effect.get("type") == "black_flash_bonus":
+            effects["black_flash_bonus"] = max(
+                float(effects["black_flash_bonus"]),
+                float(effect.get("chance_bonus", 0.0) or 0.0),
+            )
+    return effects
 
 
-def _action_basic_attack(battle: dict, attacker_num: int):
+def _action_basic_attack(battle: dict, attacker_num: int, target: str = "main", actor: str = "main"):
     attacker = battle["fighters"][attacker_num]
     defender_num = _enemy_num(attacker_num)
     defender = battle["fighters"][defender_num]
+    attacker_card = _entity_card(attacker, actor)
+    if not attacker_card or not attacker_card.is_alive():
+        return defender["main"].is_alive()
 
-    base_damage = _get_base_damage(attacker)
-    multiplier, ignore_defense, ignore_infinity = _collect_weapon_effects(
-        attacker.get("weapon"), attacker.get("weapon2")
-    )
-    if multiplier != 1.0:
-        base_damage = int(base_damage * multiplier)
-    black_flash = random.random() < attacker["black_flash_chance"]
+    target_label = _entity_display_label(defender, target)
+    black_flash = False
+    restore_amount = 0
 
-    if black_flash:
-        base_damage = int(base_damage * 1.10)
-
-    base_damage, pact_mult = _apply_pact_attack_bonus(attacker, base_damage)
+    if actor == "shikigami":
+        base_damage = max(1, int(attacker_card.attack * attacker.get("attack_multiplier", 1.0)))
+        ignore_defense = False
+        ignore_infinity = False
+        can_dodge = True
+        attack_key = "shikigami_basic"
+        attack_label = f"атака шикигами {_entity_name(attacker, 'shikigami')}"
+        attack_icon = "🐺"
+    else:
+        base_damage = _get_base_damage(attacker)
+        weapon_effects = _collect_weapon_effects(
+            attacker.get("weapon"), attacker.get("weapon2")
+        )
+        ignore_defense = bool(weapon_effects["ignore_defense"])
+        ignore_infinity = (
+            bool(weapon_effects["ignore_infinity"])
+            or bool(weapon_effects["basic_ignore_infinity"])
+            or bool(attacker.get("has_domain_amplification", False))
+        )
+        can_dodge = not bool(weapon_effects["ignore_dodge"])
+        multiplier = float(weapon_effects["basic_multiplier"])
+        if multiplier != 1.0:
+            base_damage = int(base_damage * multiplier)
+        black_flash_chance = min(
+            1.0,
+            float(attacker["black_flash_chance"]) + float(weapon_effects["black_flash_bonus"]),
+        )
+        black_flash = random.random() < black_flash_chance
+        if black_flash:
+            base_damage = int(base_damage * 1.10)
+        base_damage, _ = _apply_pact_attack_bonus(attacker, base_damage)
+        attack_key = "basic"
+        attack_label = "удар рукой"
+        attack_icon = "👊"
 
     dealt, dodged, dodge_chance, blocked = _deal_damage(
         battle,
@@ -951,29 +1394,41 @@ def _action_basic_attack(battle: dict, attacker_num: int):
         base_damage,
         ignore_defense=ignore_defense,
         ignore_infinity=ignore_infinity,
-        attack_key="basic",
-        attack_label="удар рукой",
+        attack_key=attack_key,
+        attack_label=attack_label,
+        can_dodge=can_dodge,
+        target=target,
+        attacker_unit=actor,
     )
     if blocked:
         battle["log"].append("🦆 Уточки блокируют удар.")
         return defender["main"].is_alive()
     if dodged:
         dodge_pct = int(dodge_chance * 100)
-        battle["log"].append(f"💨 Противник уклонился от атаки (шанс {dodge_pct}%).")
+        battle["log"].append(f"💨 {target_label} уклонился от атаки (шанс {dodge_pct}%).")
         return defender["main"].is_alive()
     if black_flash:
         restore_amount = min(4000, attacker["max_ce"] - attacker["ce"])
         attacker["ce"] += restore_amount
         battle["log"].append(
-            f"⚫ Чёрная молния! Урон: {dealt}, восстановлено CE: {restore_amount}."
+            f"⚫ Чёрная молния по цели {target_label}! Урон: {dealt}, восстановлено CE: {restore_amount}."
         )
     else:
-        battle["log"].append(f"👊 Обычная атака наносит {dealt} урона.")
+        battle["log"].append(f"{attack_icon} Атака по цели {target_label} наносит {dealt} урона.")
+
+    if target == "shikigami" and defender.get("shikigami") and not defender["shikigami"].is_alive():
+        battle["log"].append(f"☠️ Шикигами { _entity_name(defender, 'shikigami') } повержен.")
 
     return defender["main"].is_alive()
 
 
-def _action_special(battle: dict, attacker_num: int, key: str):
+def _action_special(
+    battle: dict,
+    attacker_num: int,
+    key: str,
+    variant: str | None = None,
+    target: str = "main",
+):
     attacker = battle["fighters"][attacker_num]
     defender_num = _enemy_num(attacker_num)
     defender = battle["fighters"][defender_num]
@@ -981,11 +1436,13 @@ def _action_special(battle: dict, attacker_num: int, key: str):
     if attacker.get("simple_domain_turns", 0) > 0:
         return False, "Во время простой территории нельзя использовать спецтехники."
 
-    special = next((sp for sp in attacker["specials"] if sp["key"] == key), None)
+    special = _find_special(attacker, key)
     if not special:
         return False, "Эта техника недоступна для твоей карты."
 
-    if not _spend_ce(attacker, special["ce_cost"]):
+    special = _resolve_special_instance(special, variant)
+
+    if not _spend_ce(attacker, int(special["ce_cost"])):
         return False, "Недостаточно CE для этой техники."
 
     if special.get("effect") == "duck_guard":
@@ -995,11 +1452,58 @@ def _action_special(battle: dict, attacker_num: int, key: str):
         return defender["main"].is_alive(), None
 
     raw = int(_get_base_damage(attacker) * special["multiplier"] + special.get("flat", 0))
+    if special.get("critical"):
+        raw = int(raw * float(special.get("critical_multiplier", 1.25)))
     raw, pact_mult = _apply_pact_attack_bonus(attacker, raw)
 
-    _, ignore_defense, ignore_infinity = _collect_weapon_effects(
+    weapon_effects = _collect_weapon_effects(
         attacker.get("weapon"), attacker.get("weapon2")
     )
+    ignore_defense = bool(weapon_effects["ignore_defense"])
+    ignore_infinity = bool(weapon_effects["ignore_infinity"])
+    can_dodge = bool(special.get("can_dodge", True)) and not bool(weapon_effects["ignore_dodge"])
+    if special.get("critical"):
+        ignore_defense = True
+
+    if special.get("aoe"):
+        entries = []
+        extra_logs = []
+        for unit in ("main", "shikigami"):
+            target_card = _entity_card(defender, unit)
+            if not target_card:
+                continue
+            dealt, dodged, dodge_chance, blocked = _deal_damage(
+                battle,
+                attacker_num,
+                defender_num,
+                raw,
+                ignore_defense=ignore_defense,
+                ignore_infinity=ignore_infinity,
+                attack_key=f"special_{special['key']}",
+                attack_label=special["name"],
+                can_dodge=can_dodge,
+                target=unit,
+                attacker_unit="main",
+            )
+            label = _entity_display_label(defender, unit)
+            if blocked:
+                entries.append(f"{label}: блок")
+                continue
+            if dodged:
+                dodge_pct = int(dodge_chance * 100)
+                entries.append(f"{label}: уклонение {dodge_pct}%")
+                continue
+            entries.append(f"{label}: {dealt} урона")
+            if unit == "shikigami" and defender.get("shikigami") and not defender["shikigami"].is_alive():
+                extra_logs.append(f"☠️ Шикигами { _entity_name(defender, 'shikigami') } повержен.")
+
+        extra = " Критический удар." if special.get("critical") else ""
+        battle["log"].append(
+            f"{special['icon']} {special['name']} поражает область ({'; '.join(entries)}) "
+            f"(-{special['ce_cost']} CE).{extra}"
+        )
+        battle["log"].extend(extra_logs)
+        return defender["main"].is_alive(), None
 
     dealt, dodged, dodge_chance, blocked = _deal_damage(
         battle,
@@ -1010,20 +1514,27 @@ def _action_special(battle: dict, attacker_num: int, key: str):
         ignore_infinity=ignore_infinity,
         attack_key=f"special_{special['key']}",
         attack_label=special["name"],
+        can_dodge=can_dodge,
+        target=target,
+        attacker_unit="main",
     )
+    target_label = _entity_display_label(defender, target)
     if blocked:
         battle["log"].append("🦆 Уточки блокируют удар.")
         return defender["main"].is_alive(), None
     if dodged:
         dodge_pct = int(dodge_chance * 100)
         battle["log"].append(
-            f"💨 Противник уклонился от техники «{special['name']}» (шанс {dodge_pct}%)."
+            f"💨 {target_label} уклонился от техники «{special['name']}» (шанс {dodge_pct}%)."
         )
         return defender["main"].is_alive(), None
+    extra = " Критический удар." if special.get("critical") else ""
     battle["log"].append(
-        f"{special['icon']} {special['name']} наносит {dealt} урона "
-        f"(-{special['ce_cost']} CE)."
+        f"{special['icon']} {special['name']} наносит {dealt} урона по цели {target_label} "
+        f"(-{special['ce_cost']} CE).{extra}"
     )
+    if target == "shikigami" and defender.get("shikigami") and not defender["shikigami"].is_alive():
+        battle["log"].append(f"☠️ Шикигами { _entity_name(defender, 'shikigami') } повержен.")
     return defender["main"].is_alive(), None
 
 
@@ -1099,13 +1610,14 @@ def _action_domain(battle: dict, attacker_num: int):
                 battle["domain_state"] = None
 
         battle["battlerdan_pending"] = {
-            "stage": "choose",
+            "stage": "topic",
             "owner": attacker_num,
             "target": defender_num,
+            "topic_id": None,
             "choice": None,
-            "options": [1, 2, 3],
+            "options": _battlerdan_topic_ids(),
         }
-        battle["log"].append("🏯 Баттлердан открывает дебаты. Выбери аргумент.")
+        battle["log"].append("🏯 Баттлердан открывает дебаты. Сначала выбери тему, затем истину.")
         return True, None
 
     domain = battle.get("domain_state")
@@ -1255,16 +1767,24 @@ def _action_mahoraga(battle: dict, attacker_num: int):
     return True, None
 
 
-def _action_higuruma_sword(battle: dict, attacker_num: int):
+def _action_higuruma_sword(battle: dict, attacker_num: int, target: str = "main"):
     attacker = battle["fighters"][attacker_num]
     if not attacker.get("higuruma_sword_ready", False):
-        return False, "Золотой меч сейчас недоступен."
+        skill_name = "Золотая правда" if attacker.get("is_battlerdan") else "Золотой меч"
+        return False, f"{skill_name} сейчас недоступна."
 
     defender_num = _enemy_num(attacker_num)
     defender = battle["fighters"][defender_num]
-    defender["main"].hp = 0
+    target_card = _entity_card(defender, target)
+    if not target_card:
+        return False, "Эта цель уже недоступна."
+    target_card.hp = 0
     attacker["higuruma_sword_ready"] = False
-    battle["log"].append("⚖️ Золотой меч Хигурумы сразил врага мгновенно.")
+    target_label = _entity_display_label(defender, target)
+    if attacker.get("is_battlerdan"):
+        battle["log"].append(f"⚖️ Золотая правда Баттлердана мгновенно сокрушает {target_label}.")
+    else:
+        battle["log"].append(f"⚖️ Золотой меч Хигурумы мгновенно поражает {target_label}.")
     return defender["main"].is_alive(), None
 
 def _action_pact(battle: dict, attacker_num: int, pact_id: int):
@@ -1298,7 +1818,110 @@ def _action_pact(battle: dict, attacker_num: int, pact_id: int):
     if ce_mult != 1.0:
         attacker["ce_regen"] = max(0, int(attacker["ce_regen"] * ce_mult))
 
+    exp_mult = float(effect.get("post_battle_exp_multiplier", 1.0))
+    if exp_mult > 1.0:
+        attacker["post_battle_exp_multiplier"] = max(
+            float(attacker.get("post_battle_exp_multiplier", 1.0)),
+            exp_mult,
+        )
+
+    if effect.get("survive_lethal_once"):
+        attacker["survive_lethal_available"] = True
+
+    if effect.get("consume_after_battle"):
+        attacker.setdefault("single_use_pacts_to_consume", set()).add(pact_id)
+
     return True, effect.get("label", "Пакт активирован.")
+
+
+async def _consume_single_use_pacts(session, user: User, fighter_state: dict) -> list[str]:
+    pact_ids = set(fighter_state.get("single_use_pacts_to_consume", set()) or set())
+    consumed_names = []
+    for pact_id in pact_ids:
+        pact_card = await session.scalar(
+            select(UserCard)
+            .options(selectinload(UserCard.card_template))
+            .where(UserCard.id == pact_id, UserCard.user_id == user.id)
+        )
+        if not pact_card:
+            continue
+        if user.slot_4_card_id == pact_id:
+            user.slot_4_card_id = None
+        if user.slot_5_card_id == pact_id:
+            user.slot_5_card_id = None
+        if pact_card.card_template and pact_card.card_template.name:
+            consumed_names.append(pact_card.card_template.name)
+        await session.delete(pact_card)
+    return consumed_names
+
+
+def _requires_target_selection(battle: dict, attacker_num: int, aoe: bool = False) -> bool:
+    if aoe:
+        return False
+    defender = battle["fighters"][_enemy_num(attacker_num)]
+    return bool(_living_shikigami(defender))
+
+
+def _queue_target_selection(battle: dict, player_num: int, **payload):
+    _set_pending_target(battle, player_num, payload)
+
+
+def _execute_targeted_action(
+    battle: dict,
+    attacker_num: int,
+    payload: dict,
+    target: str,
+) -> tuple[bool | None, str | None]:
+    if target not in {"main", "shikigami"}:
+        return None, "Некорректная цель."
+
+    defender = battle["fighters"][_enemy_num(attacker_num)]
+    if target == "shikigami" and not _living_shikigami(defender):
+        return None, "У противника больше нет живого шикигами."
+
+    flags = _get_turn_flags(battle, attacker_num)
+    kind = payload.get("kind")
+
+    if kind == "basic":
+        actor = payload.get("actor", "main")
+        if actor == "shikigami":
+            if flags.get("shikigami_attack_used", False):
+                return None, "Шикигами уже атаковал в этом ходу."
+            defender_alive = _action_basic_attack(battle, attacker_num, target=target, actor="shikigami")
+            flags["shikigami_attack_used"] = True
+            return defender_alive, None
+
+        if _main_attack_used(flags):
+            return None, "Ты уже использовал атаку в этом ходу."
+        defender_alive = _action_basic_attack(battle, attacker_num, target=target, actor="main")
+        flags["main_attack_used"] = True
+        return defender_alive, None
+
+    if kind == "special":
+        if _main_attack_used(flags):
+            return None, "Ты уже использовал атаку в этом ходу."
+        defender_alive, error = _action_special(
+            battle,
+            attacker_num,
+            str(payload.get("key") or ""),
+            variant=payload.get("variant"),
+            target=target,
+        )
+        if error:
+            return None, error
+        flags["main_attack_used"] = True
+        return defender_alive, None
+
+    if kind == "higuruma_sword":
+        if _main_attack_used(flags):
+            return None, "Ты уже использовал атаку в этом ходу."
+        defender_alive, error = _action_higuruma_sword(battle, attacker_num, target=target)
+        if error:
+            return None, error
+        flags["main_attack_used"] = True
+        return defender_alive, None
+
+    return None, "Это действие нельзя направить в цель."
 
 
 async def _process_action(callback: CallbackQuery, action: str):
@@ -1316,18 +1939,124 @@ async def _process_action(callback: CallbackQuery, action: str):
     attacker_num = _player_num_by_tg(battle, user_id)
     defender_num = _enemy_num(attacker_num)
     attacker_user_id = battle["player1_id"] if attacker_num == 1 else battle["player2_id"]
+    attacker_state = battle["fighters"][attacker_num]
+
+    pending_target = _pending_target_for(battle, attacker_num)
+    if pending_target:
+        if action == "target_back":
+            _clear_pending_target(battle, attacker_num)
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+        if action not in ("target_main", "target_shikigami"):
+            await callback.answer("Сначала выбери цель текущей атаки.", show_alert=True)
+            return
+        target = "main" if action == "target_main" else "shikigami"
+        defender_alive, error = _execute_targeted_action(battle, attacker_num, pending_target, target)
+        if error:
+            _clear_pending_target(battle, attacker_num)
+            await _update_battle_messages(callback, battle)
+            await callback.answer(error, show_alert=True)
+            return
+        _clear_pending_target(battle, attacker_num)
+        if defender_alive is False:
+            await end_pvp_battle(callback, battle, winner_is_player1=attacker_num == 1)
+            await callback.answer()
+            return
+        await _update_battle_messages(callback, battle)
+        await callback.answer()
+        return
+
+    pending_special = _pending_special_variant_for(battle, attacker_num)
+    if pending_special:
+        if action == "special_variant_back":
+            _clear_pending_special_variant(battle, attacker_num)
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+        if action.startswith("special_pick_"):
+            try:
+                payload = action.split("special_pick_", 1)[1]
+                key, variant = payload.rsplit("_", 1)
+            except ValueError:
+                await callback.answer("Некорректный вариант техники.", show_alert=True)
+                return
+            if key != pending_special:
+                await callback.answer("Сначала заверши выбор текущей техники.", show_alert=True)
+                return
+            flags = _get_turn_flags(battle, attacker_num)
+            if _main_attack_used(flags):
+                await callback.answer("Ты уже использовал атаку в этом ходу.", show_alert=True)
+                return
+            special = _find_special(attacker_state, key)
+            if not special:
+                _clear_pending_special_variant(battle, attacker_num)
+                await callback.answer("Эта техника недоступна.", show_alert=True)
+                return
+            resolved = _resolve_special_instance(special, variant)
+            if _requires_target_selection(battle, attacker_num, aoe=bool(resolved.get("aoe"))):
+                _clear_pending_special_variant(battle, attacker_num)
+                _queue_target_selection(
+                    battle,
+                    attacker_num,
+                    kind="special",
+                    key=key,
+                    variant=variant,
+                    prompt=f"Выбери цель для техники «{resolved['name']}».",
+                )
+                await _update_battle_messages(callback, battle)
+                await callback.answer()
+                return
+
+            defender_alive, error = _action_special(battle, attacker_num, key, variant=variant)
+            if error:
+                await callback.answer(error, show_alert=True)
+                return
+            _clear_pending_special_variant(battle, attacker_num)
+            flags["main_attack_used"] = True
+            if not defender_alive:
+                await end_pvp_battle(callback, battle, winner_is_player1=attacker_num == 1)
+                await callback.answer()
+                return
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+        await callback.answer("Сначала выбери вариант техники.", show_alert=True)
+        return
 
     pending_battlerdan = _pending_battlerdan_for(battle, attacker_num)
     if pending_battlerdan:
+        if action.startswith("battlerdan_topic_"):
+            try:
+                topic_id = int(action.split("battlerdan_topic_", 1)[1])
+            except ValueError:
+                await callback.answer("Некорректная тема.", show_alert=True)
+                return
+            debate = get_battlerdan_debate(topic_id)
+            if not debate:
+                await callback.answer("Такая тема недоступна.", show_alert=True)
+                return
+            pending_battlerdan["topic_id"] = topic_id
+            pending_battlerdan["stage"] = "choose"
+            pending_battlerdan["options"] = _battlerdan_options(topic_id)
+            battle["log"].append(f"📚 Баттлердан выбирает тему: {debate['question']}")
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+
         if action.startswith("battlerdan_choose_"):
             try:
                 choice = int(action.split("battlerdan_choose_", 1)[1])
             except ValueError:
                 await callback.answer("Некорректный выбор.", show_alert=True)
                 return
+            if not get_battlerdan_option(pending_battlerdan.get("topic_id"), choice):
+                await callback.answer("Такой ответ недоступен.", show_alert=True)
+                return
             pending_battlerdan["choice"] = choice
             pending_battlerdan["stage"] = "guess"
-            battle["log"].append("🗣 Баттлердан выбрал аргумент. Противник пытается угадать...")
+            pending_battlerdan["options"] = _battlerdan_options(pending_battlerdan.get("topic_id"))
+            battle["log"].append("🗣 Баттлердан выбрал истину. Противник пытается угадать...")
             await _advance_turn(callback, battle, attacker_num)
             await callback.answer()
             return
@@ -1337,6 +2066,9 @@ async def _process_action(callback: CallbackQuery, action: str):
                 guess = int(action.split("battlerdan_guess_", 1)[1])
             except ValueError:
                 await callback.answer("Некорректный выбор.", show_alert=True)
+                return
+            if not get_battlerdan_option(pending_battlerdan.get("topic_id"), guess):
+                await callback.answer("Такой ответ недоступен.", show_alert=True)
                 return
             _resolve_battlerdan_guess(battle, pending_battlerdan, guess)
             battle["battlerdan_pending"] = None
@@ -1385,11 +2117,50 @@ async def _process_action(callback: CallbackQuery, action: str):
     flags = _get_turn_flags(battle, attacker_num)
 
     if action == "basic":
-        if flags.get("attack_used"):
+        if _main_attack_used(flags):
             await callback.answer("Ты уже использовал атаку в этом ходу.", show_alert=True)
             return
-        defender_alive = _action_basic_attack(battle, attacker_num)
-        flags["attack_used"] = True
+        if _requires_target_selection(battle, attacker_num):
+            _queue_target_selection(
+                battle,
+                attacker_num,
+                kind="basic",
+                actor="main",
+                prompt="Выбери цель для обычной атаки.",
+            )
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+        defender_alive = _action_basic_attack(battle, attacker_num, target="main", actor="main")
+        flags["main_attack_used"] = True
+        if not defender_alive:
+            await end_pvp_battle(callback, battle, winner_is_player1=attacker_num == 1)
+            await callback.answer()
+            return
+        await _update_battle_messages(callback, battle)
+        await callback.answer()
+        return
+
+    if action == "shikigami_basic":
+        if not _living_shikigami(attacker_state):
+            await callback.answer("Твой шикигами уже повержен.", show_alert=True)
+            return
+        if flags.get("shikigami_attack_used", False):
+            await callback.answer("Шикигами уже атаковал в этом ходу.", show_alert=True)
+            return
+        if _requires_target_selection(battle, attacker_num):
+            _queue_target_selection(
+                battle,
+                attacker_num,
+                kind="basic",
+                actor="shikigami",
+                prompt=f"Выбери цель для шикигами {_entity_name(attacker_state, 'shikigami')}.",
+            )
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+        defender_alive = _action_basic_attack(battle, attacker_num, target="main", actor="shikigami")
+        flags["shikigami_attack_used"] = True
         if not defender_alive:
             await end_pvp_battle(callback, battle, winner_is_player1=attacker_num == 1)
             await callback.answer()
@@ -1399,14 +2170,25 @@ async def _process_action(callback: CallbackQuery, action: str):
         return
 
     if action == "higuruma_sword":
-        if flags.get("attack_used"):
+        if _main_attack_used(flags):
             await callback.answer("Ты уже использовал атаку в этом ходу.", show_alert=True)
             return
-        defender_alive, error = _action_higuruma_sword(battle, attacker_num)
+        if _requires_target_selection(battle, attacker_num):
+            sword_name = "Золотая правда" if attacker_state.get("is_battlerdan") else "Золотой меч"
+            _queue_target_selection(
+                battle,
+                attacker_num,
+                kind="higuruma_sword",
+                prompt=f"Выбери цель для {sword_name}.",
+            )
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+        defender_alive, error = _action_higuruma_sword(battle, attacker_num, target="main")
         if error:
             await callback.answer(error, show_alert=True)
             return
-        flags["attack_used"] = True
+        flags["main_attack_used"] = True
         if not defender_alive:
             await end_pvp_battle(callback, battle, winner_is_player1=attacker_num == 1)
             await callback.answer()
@@ -1416,14 +2198,39 @@ async def _process_action(callback: CallbackQuery, action: str):
         return
 
     if action.startswith("special_"):
-        if flags.get("attack_used"):
+        if _main_attack_used(flags):
             await callback.answer("Ты уже использовал атаку в этом ходу.", show_alert=True)
             return
-        defender_alive, error = _action_special(battle, attacker_num, action.split("special_", 1)[1])
+        special_action = action.split("special_", 1)[1]
+        if special_action.startswith("menu_"):
+            key = special_action.split("menu_", 1)[1]
+            special = _find_special(battle["fighters"][attacker_num], key)
+            if not special or not special.get("variants"):
+                await callback.answer("Для этой техники нет вариантов.", show_alert=True)
+                return
+            _set_pending_special_variant(battle, attacker_num, key)
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+        special = _find_special(attacker_state, special_action)
+        if special and _requires_target_selection(battle, attacker_num, aoe=bool(special.get("aoe"))):
+            _queue_target_selection(
+                battle,
+                attacker_num,
+                kind="special",
+                key=special_action,
+                variant=None,
+                prompt=f"Выбери цель для техники «{special['name']}».",
+            )
+            await _update_battle_messages(callback, battle)
+            await callback.answer()
+            return
+
+        defender_alive, error = _action_special(battle, attacker_num, special_action)
         if error:
             await callback.answer(error, show_alert=True)
             return
-        flags["attack_used"] = True
+        flags["main_attack_used"] = True
         if not defender_alive:
             await end_pvp_battle(callback, battle, winner_is_player1=attacker_num == 1)
             await callback.answer()
@@ -1684,7 +2491,7 @@ def _build_fighter_state(
     is_battlerdan = _name_has_tokens(main_name, BATTLERDAN_TOKENS)
 
     profile = _get_character_profile(main_name)
-    specials = [dict(sp) for sp in profile.get("specials", [])]
+    specials = [deepcopy(sp) for sp in profile.get("specials", [])]
 
     def _extend_specials(items: list[dict]):
         existing = {sp.get("key") for sp in specials}
@@ -1709,9 +2516,8 @@ def _build_fighter_state(
         weapon2 = shikigami_card
         shikigami_card = None
 
-    support_ce_bonus = shikigami_card.max_ce * 30 if shikigami_card else 0
-    max_ce = max(3000, main_card.max_ce * 100 + support_ce_bonus)
-    ce_regen = max(300, main_card.get_ce_regen() * 100)
+    max_ce = max(BATTLE_CE_MIN, main_card.max_ce * BATTLE_CE_SCALE)
+    ce_regen = max(BATTLE_CE_REGEN_MIN, main_card.get_ce_regen() * BATTLE_CE_REGEN_SCALE)
 
     if is_toji:
         max_ce = 0
@@ -1723,16 +2529,16 @@ def _build_fighter_state(
     domain_damage_bonus = profile["domain_damage_bonus"] + domain_level * DOMAIN_DAMAGE_BONUS_PER_POINT
 
     has_mahoraga = False
+    mahoraga_requires_shikigami = False
     if shikigami_card and shikigami_card.card_template:
         has_mahoraga = _normalize_name(shikigami_card.card_template.name) == "махорага"
+        mahoraga_requires_shikigami = has_mahoraga
     if is_megumi:
         has_mahoraga = True
 
     mahoraga_cost = MAHORAGA_ADAPT_COST
-    shikigami_damage_mult = 0.5
     if is_megumi:
         mahoraga_cost = int(MAHORAGA_ADAPT_COST * 0.6)
-        shikigami_damage_mult = 0.7
 
     attack_multiplier = 1.0
     clan_bonuses = clan_bonuses or {}
@@ -1767,9 +2573,9 @@ def _build_fighter_state(
         "has_domain": has_domain,
         "has_simple_domain": has_simple_domain,
         "has_reverse_ct": has_reverse_ct,
-        "domain_cost": 4000,
+        "domain_cost": BATTLE_DOMAIN_COST,
         "simple_domain_cost": 0,
-        "rct_cost": 2500,
+        "rct_cost": BATTLE_RCT_COST,
         "simple_domain_turns": 0,
         "black_flash_chance": get_black_flash_chance(main_name),
         "domain_level": domain_level,
@@ -1778,6 +2584,7 @@ def _build_fighter_state(
         "next_attack_ready": False,
         "pact_used": set(),
         "has_mahoraga": has_mahoraga,
+        "mahoraga_requires_shikigami": mahoraga_requires_shikigami,
         "mahoraga_ready": False,
         "mahoraga_adapt": {},
         "mahoraga_domain_adapt": {},
@@ -1785,11 +2592,17 @@ def _build_fighter_state(
         "higuruma_sword_ready": False,
         "ce_lock_turns": 0,
         "attack_multiplier": attack_multiplier,
-        "shikigami_damage_mult": shikigami_damage_mult,
+        "post_battle_exp_multiplier": 1.0,
+        "single_use_pacts_to_consume": set(),
+        "survive_lethal_available": False,
         "pacts_disabled": is_toji,
         "ignore_domain_effects": is_toji,
         "is_battlerdan": is_battlerdan,
-        "infinity_chance": 0.8 if is_gojo and TECH_INFINITY in technique_names else 0.0,
+        "infinity_chance": 1.0 if is_gojo and TECH_INFINITY in technique_names else 0.0,
+        "has_domain_amplification": (
+            toolkit.get("has_domain_amplification", False)
+            or TECH_DOMAIN_AMPLIFICATION in technique_names
+        ),
         "hakari_jackpot_turns": 0,
         "hakari_jackpot_chance": 0.33,
         "is_toji": is_toji,
@@ -1804,6 +2617,8 @@ def _build_fighter_state(
         state["mahoraga_cost"] = int(state["mahoraga_cost"] * discount)
         for sp in state["specials"]:
             sp["ce_cost"] = int(sp.get("ce_cost", 0) * discount)
+            for variant in (sp.get("variants") or {}).values():
+                variant["ce_cost"] = int(variant.get("ce_cost", 0) * discount)
 
     return state
 
@@ -1857,17 +2672,35 @@ async def start_pvp_battle(callback: CallbackQuery, player1: User, player2: User
         if player2.equipped_title_id:
             p2_title = await session.scalar(select(Title).where(Title.id == player2.equipped_title_id))
 
-        battle_id = f"pvp_{player1.id}_{player2.id}_{datetime.utcnow().timestamp()}"
-        current_player = 1
-
-        p1_speed = p1_main.speed + (p1_shikigami.speed if p1_shikigami else 0)
-        p2_speed = p2_main.speed + (p2_shikigami.speed if p2_shikigami else 0)
-        if p2_speed > p1_speed:
-            current_player = 2
-        first_turn_card = p1_main.card_template.name if current_player == 1 else p2_main.card_template.name
-
         p1_clan_bonuses = await get_clan_bonuses(session, player1.clan)
         p2_clan_bonuses = await get_clan_bonuses(session, player2.clan)
+
+        fighters = {
+            1: _build_fighter_state(
+                p1_main,
+                p1_weapon,
+                p1_shikigami,
+                [p1_pact1, p1_pact2],
+                p1_toolkit,
+                clan_bonuses=p1_clan_bonuses,
+                technique_names=p1_techniques,
+            ),
+            2: _build_fighter_state(
+                p2_main,
+                p2_weapon,
+                p2_shikigami,
+                [p2_pact1, p2_pact2],
+                p2_toolkit,
+                clan_bonuses=p2_clan_bonuses,
+                technique_names=p2_techniques,
+            ),
+        }
+
+        battle_id = f"pvp_{player1.id}_{player2.id}_{datetime.utcnow().timestamp()}"
+        current_player = 1
+        if _team_speed(fighters[2]) > _team_speed(fighters[1]):
+            current_player = 2
+        first_turn_card = fighters[current_player]["main"].card_template.name
 
         battle = {
             "battle_id": battle_id,
@@ -1875,34 +2708,17 @@ async def start_pvp_battle(callback: CallbackQuery, player1: User, player2: User
             "player1_tg": player1.telegram_id,
             "player2_id": player2.id,
             "player2_tg": player2.telegram_id,
-              "fighters": {
-                  1: _build_fighter_state(
-                      p1_main,
-                      p1_weapon,
-                      p1_shikigami,
-                      [p1_pact1, p1_pact2],
-                      p1_toolkit,
-                      clan_bonuses=p1_clan_bonuses,
-                      technique_names=p1_techniques,
-                  ),
-                  2: _build_fighter_state(
-                      p2_main,
-                      p2_weapon,
-                      p2_shikigami,
-                      [p2_pact1, p2_pact2],
-                      p2_toolkit,
-                      clan_bonuses=p2_clan_bonuses,
-                      technique_names=p2_techniques,
-                  ),
-              },
+            "fighters": fighters,
             "turn": 1,
             "current_player": current_player,
             "domain_state": None,
             "pending_domain_response": None,
             "battlerdan_pending": None,
+            "pending_special_variant": {},
+            "pending_target": {},
             "turn_flags": {
-                1: {"attack_used": False, "rct_used": False, "mahoraga_used": False},
-                2: {"attack_used": False, "rct_used": False, "mahoraga_used": False},
+                1: _default_turn_flags(),
+                2: _default_turn_flags(),
             },
             "log": [
                 f"⚡ Первый ход за картой {first_turn_card} (преимущество скорости)."
@@ -1950,6 +2766,10 @@ async def end_pvp_battle(callback: CallbackQuery, battle: dict, winner_is_player
 
         winner = player1 if winner_is_player1 else player2
         loser = player2 if winner_is_player1 else player1
+        winner_num = 1 if winner_is_player1 else 2
+        loser_num = 2 if winner_is_player1 else 1
+        winner_state = battle["fighters"][winner_num]
+        loser_state = battle["fighters"][loser_num]
 
         winner.pvp_wins += 1
         winner.total_battles += 1
@@ -1969,9 +2789,15 @@ async def end_pvp_battle(callback: CallbackQuery, battle: dict, winner_is_player
         if level_diff > 0:
             exp_gained += level_diff * 10
 
+        winner_exp_mult = max(1.0, float(winner_state.get("post_battle_exp_multiplier", 1.0) or 1.0))
+        exp_gained = int(exp_gained * winner_exp_mult)
+
         leveled_up, actual_exp, unlocked_from_level = await apply_experience_with_pvp_rolls(
             session, winner, exp_gained
         )
+
+        winner_consumed_pacts = await _consume_single_use_pacts(session, winner, winner_state)
+        loser_consumed_pacts = await _consume_single_use_pacts(session, loser, loser_state)
 
         if winner.clan:
             await add_clan_exp(session, winner.clan, CLAN_EXP_PER_PVP_WIN)
@@ -2046,17 +2872,23 @@ async def end_pvp_battle(callback: CallbackQuery, battle: dict, winner_is_player
             f"😵 Побежден {loser.first_name or 'противник'}!\n\n"
             f"⭐ Опыт: +{actual_exp}\n"
         )
+        if winner_exp_mult > 1.0:
+            winner_text += f"📜 <b>Пакт опыта:</b> x{winner_exp_mult:.1f}\n"
         if leveled_up:
             winner_text += f"🎉 <b>Новый уровень! Теперь ты {winner.level} уровень!</b>\n"
         if unlocked_from_level:
             unlocked_names = ", ".join(t.name for t in unlocked_from_level)
             winner_text += f"🆕 <b>Новые PvP-техники:</b> {unlocked_names}\n"
+        if winner_consumed_pacts:
+            winner_text += f"🕯 <b>Израсходованы пакты:</b> {', '.join(winner_consumed_pacts)}\n"
 
         loser_text = (
             "💀 <b>Поражение...</b>\n\n"
             f"{winner.first_name or 'Противник'} одержал победу.\n\n"
             "Попробуй снова и станешь сильнее."
         )
+        if loser_consumed_pacts:
+            loser_text += f"\n\n🕯 Израсходованы пакты: {', '.join(loser_consumed_pacts)}"
 
         try:
             await callback.bot.send_message(

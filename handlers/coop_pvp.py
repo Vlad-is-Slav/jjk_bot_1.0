@@ -145,6 +145,85 @@ CHARACTER_PROFILES = [
             {"key": "white", "name": "Белый", "icon": "⚪", "ce_cost": 5000, "multiplier": 2.6, "flat": 500},
         ],
     },
+    {
+        "tokens": ["дагон", "dagon"],
+        "domain_name": "Горизонт плена скандхи",
+        "domain_dot_pct": 0.17,
+        "domain_damage_bonus": 0.26,
+        "domain_effect": "dot",
+        "specials": [
+            {"key": "tidal", "name": "Приливный обвал", "icon": "🌊", "ce_cost": 1700, "multiplier": 1.65, "flat": 250},
+            {"key": "swarm", "name": "Стая глубин", "icon": "🦑", "ce_cost": 2600, "multiplier": 2.05, "flat": 360},
+        ],
+    },
+    {
+        "tokens": ["ханами", "hanami"],
+        "domain_name": "Цветущий гнев",
+        "domain_dot_pct": 0.14,
+        "domain_damage_bonus": 0.22,
+        "domain_effect": "dot",
+        "domain_slow_pct": 0.18,
+        "specials": [
+            {"key": "roots", "name": "Корни-ловушки", "icon": "🌿", "ce_cost": 1100, "multiplier": 1.45, "flat": 180},
+            {"key": "blossom", "name": "Цветочный обвал", "icon": "🌸", "ce_cost": 1800, "multiplier": 1.75, "flat": 260},
+        ],
+    },
+    {
+        "tokens": ["дзёго", "джого", "jogo"],
+        "domain_name": "Пылающий кратер",
+        "domain_dot_pct": 0.16,
+        "domain_damage_bonus": 0.28,
+        "domain_effect": "gojo_crit",
+        "specials": [
+            {"key": "ember", "name": "Вулканический залп", "icon": "🔥", "ce_cost": 1400, "multiplier": 1.55, "flat": 220},
+            {"key": "eruption", "name": "Извержение", "icon": "🌋", "ce_cost": 2400, "multiplier": 2.0, "flat": 340},
+        ],
+    },
+    {
+        "tokens": ["махито", "mahito"],
+        "domain_name": "Мгновенное воплощение совершенства",
+        "domain_dot_pct": 0.18,
+        "domain_damage_bonus": 0.31,
+        "domain_effect": "soul_dot",
+        "specials": [
+            {"key": "idle_touch", "name": "Преобразование души", "icon": "🫳", "ce_cost": 1900, "multiplier": 1.8, "flat": 290},
+            {"key": "distortion", "name": "Искажённый обвал", "icon": "🧬", "ce_cost": 3100, "multiplier": 2.2, "flat": 420},
+        ],
+    },
+    {
+        "tokens": ["кендзяку", "kenjaku"],
+        "domain_name": "Чрево поглощённых проклятий",
+        "domain_dot_pct": 0.19,
+        "domain_damage_bonus": 0.33,
+        "domain_effect": "dot",
+        "specials": [
+            {"key": "gravity", "name": "Гравитационный обвал", "icon": "🪐", "ce_cost": 2200, "multiplier": 1.95, "flat": 320},
+            {"key": "uzumaki", "name": "Узумаки", "icon": "🌀", "ce_cost": 3600, "multiplier": 2.45, "flat": 520},
+        ],
+    },
+    {
+        "tokens": ["ураумэ", "uraume"],
+        "domain_name": "Ледяная камера",
+        "domain_dot_pct": 0.12,
+        "domain_damage_bonus": 0.18,
+        "domain_effect": "dot",
+        "domain_slow_pct": 0.18,
+        "specials": [
+            {"key": "frost_lance", "name": "Морозное копьё", "icon": "❄️", "ce_cost": 1100, "multiplier": 1.55, "flat": 220},
+            {"key": "icefall", "name": "Ледопад", "icon": "🧊", "ce_cost": 2200, "multiplier": 1.85, "flat": 320},
+        ],
+    },
+    {
+        "tokens": ["кашимо", "хадзимэ", "kashimo", "hajime"],
+        "domain_name": "Поле грома",
+        "domain_dot_pct": 0.13,
+        "domain_damage_bonus": 0.24,
+        "domain_effect": "soul_dot",
+        "specials": [
+            {"key": "lightning_bolt", "name": "Громовой разряд", "icon": "⚡", "ce_cost": 1000, "multiplier": 1.6, "flat": 220},
+            {"key": "amber_beast", "name": "Мифический зверь: Янтарь", "icon": "🟨", "ce_cost": 3600, "multiplier": 2.35, "flat": 480},
+        ],
+    },
 ]
 
 DEFAULT_PROFILE = {
@@ -882,13 +961,13 @@ def _deal_damage(
         defender_state["block_next_hits"] -= 1
         return 0, False, 0.0, True
 
+    guaranteed_hit = _is_guaranteed_hit(battle, attacker_num, defender_num)
     infinity_chance = float(defender_state.get("infinity_chance", 0.0) or 0.0)
-    if infinity_chance > 0 and not ignore_infinity:
-        if random.random() < infinity_chance:
-            battle["log"].append("∞ Бесконечность блокирует атаку.")
-            return 0, False, 0.0, False
+    if infinity_chance > 0 and not ignore_infinity and not guaranteed_hit:
+        battle["log"].append("∞ Бесконечность блокирует атаку.")
+        return 0, False, 0.0, False
 
-    if can_dodge and not _is_guaranteed_hit(battle, attacker_num, defender_num):
+    if can_dodge and not guaranteed_hit:
         chance = _dodge_chance(battle, attacker_state, defender_state, attacker_num, defender_num)
         if chance > 0 and random.random() < chance:
             return 0, True, chance, False
@@ -896,10 +975,16 @@ def _deal_damage(
     attacker_bonus = _domain_attack_bonus(battle, attacker_num, defender_num)
     final_raw = max(1, int(raw_damage * attacker_bonus))
     defender = defender_state["main"]
+    before_hp = int(defender.hp)
     if ignore_defense:
         dealt = defender.take_true_damage(final_raw)
     else:
         dealt = defender.take_damage(final_raw)
+    if defender.hp <= 0 and defender_state.get("survive_lethal_available", False):
+        defender.hp = 1
+        defender_state["survive_lethal_available"] = False
+        dealt = max(0, before_hp - 1)
+        battle["log"].append(f"📜 Пакт выживания срабатывает: {defender.card_template.name} остаётся на 1 HP.")
     _apply_mahoraga_adaptation(battle, defender_num, attack_key, attack_label, dealt)
     return dealt, False, 0.0, False
 
@@ -1160,22 +1245,36 @@ def _select_target_player(battle: dict, attacker_num: int) -> int | None:
     return candidates[0]
 
 
-def _collect_weapon_effects(*weapons: UserCard | None) -> tuple[float, bool, bool]:
-    multiplier = 1.0
-    ignore_defense = False
-    ignore_infinity = False
+def _collect_weapon_effects(*weapons: UserCard | None) -> dict[str, float | bool]:
+    effects: dict[str, float | bool] = {
+        "basic_multiplier": 1.0,
+        "ignore_defense": False,
+        "ignore_infinity": False,
+        "basic_ignore_infinity": False,
+        "ignore_dodge": False,
+        "black_flash_bonus": 0.0,
+    }
     for weapon in weapons:
         effect = get_weapon_effect(weapon)
         if not effect:
             continue
         if effect.get("type") == "basic_multiplier":
             roll = random.uniform(effect.get("min", 1.0), effect.get("max", 1.0))
-            multiplier = max(multiplier, roll)
+            effects["basic_multiplier"] = max(float(effects["basic_multiplier"]), roll)
         elif effect.get("type") == "ignore_defense":
-            ignore_defense = True
+            effects["ignore_defense"] = True
         elif effect.get("type") == "ignore_infinity":
-            ignore_infinity = True
-    return multiplier, ignore_defense, ignore_infinity
+            effects["ignore_infinity"] = True
+        elif effect.get("type") == "basic_ignore_infinity":
+            effects["basic_ignore_infinity"] = True
+        elif effect.get("type") == "ignore_dodge":
+            effects["ignore_dodge"] = True
+        elif effect.get("type") == "black_flash_bonus":
+            effects["black_flash_bonus"] = max(
+                float(effects["black_flash_bonus"]),
+                float(effect.get("chance_bonus", 0.0) or 0.0),
+            )
+    return effects
 
 
 def _action_basic_attack(battle: dict, attacker_num: int, defender_num: int):
@@ -1183,12 +1282,24 @@ def _action_basic_attack(battle: dict, attacker_num: int, defender_num: int):
     defender = battle["fighters"][defender_num]
 
     base_damage = _get_base_damage(attacker)
-    multiplier, ignore_defense, ignore_infinity = _collect_weapon_effects(
+    weapon_effects = _collect_weapon_effects(
         attacker.get("weapon"), attacker.get("weapon2")
     )
+    ignore_defense = bool(weapon_effects["ignore_defense"])
+    ignore_infinity = (
+        bool(weapon_effects["ignore_infinity"])
+        or bool(weapon_effects["basic_ignore_infinity"])
+        or bool(attacker.get("has_domain_amplification", False))
+    )
+    can_dodge = not bool(weapon_effects["ignore_dodge"])
+    multiplier = float(weapon_effects["basic_multiplier"])
     if multiplier != 1.0:
         base_damage = int(base_damage * multiplier)
-    black_flash = random.random() < attacker["black_flash_chance"]
+    black_flash_chance = min(
+        1.0,
+        float(attacker["black_flash_chance"]) + float(weapon_effects["black_flash_bonus"]),
+    )
+    black_flash = random.random() < black_flash_chance
 
     if black_flash:
         base_damage = int(base_damage * 1.10)
@@ -1203,6 +1314,7 @@ def _action_basic_attack(battle: dict, attacker_num: int, defender_num: int):
         ignore_infinity=ignore_infinity,
         attack_key="basic",
         attack_label="удар рукой",
+        can_dodge=can_dodge,
     )
     if blocked:
         battle["log"].append("🦆 Уточки блокируют удар.")
@@ -1246,9 +1358,12 @@ def _action_special(battle: dict, attacker_num: int, defender_num: int, key: str
     raw = int(_get_base_damage(attacker) * special["multiplier"] + special.get("flat", 0))
     raw, pact_mult = _apply_pact_attack_bonus(attacker, raw)
 
-    _, ignore_defense, ignore_infinity = _collect_weapon_effects(
+    weapon_effects = _collect_weapon_effects(
         attacker.get("weapon"), attacker.get("weapon2")
     )
+    ignore_defense = bool(weapon_effects["ignore_defense"])
+    ignore_infinity = bool(weapon_effects["ignore_infinity"])
+    can_dodge = not bool(weapon_effects["ignore_dodge"])
 
     dealt, dodged, dodge_chance, blocked = _deal_damage(
         battle,
@@ -1259,6 +1374,7 @@ def _action_special(battle: dict, attacker_num: int, defender_num: int, key: str
         ignore_infinity=ignore_infinity,
         attack_key=f"special_{special['key']}",
         attack_label=special["name"],
+        can_dodge=can_dodge,
     )
     if blocked:
         battle["log"].append("🦆 Уточки блокируют удар.")
@@ -1547,6 +1663,9 @@ def _action_pact(battle: dict, attacker_num: int, pact_id: int):
     ce_mult = float(effect.get("ce_regen_multiplier", 1.0))
     if ce_mult != 1.0:
         attacker["ce_regen"] = max(0, int(attacker["ce_regen"] * ce_mult))
+
+    if effect.get("survive_lethal_once"):
+        attacker["survive_lethal_available"] = True
 
     return True, effect.get("label", "Пакт активирован.")
 
@@ -2092,10 +2211,11 @@ def _build_fighter_state(
         "ce_lock_turns": 0,
         "attack_multiplier": attack_multiplier,
         "shikigami_damage_mult": shikigami_damage_mult,
+        "survive_lethal_available": False,
         "pacts_disabled": is_toji,
         "ignore_domain_effects": is_toji,
         "is_battlerdan": is_battlerdan,
-        "infinity_chance": 0.8 if is_gojo and TECH_INFINITY in technique_names else 0.0,
+        "infinity_chance": 1.0 if is_gojo and TECH_INFINITY in technique_names else 0.0,
         "hakari_jackpot_turns": 0,
         "hakari_jackpot_chance": 0.33,
         "is_toji": is_toji,

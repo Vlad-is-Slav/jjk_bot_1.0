@@ -14,6 +14,7 @@ from config import (
     RCT_HEAL_BONUS_PER_POINT,
 )
 from utils.card_rewards import (
+    get_card_data_by_name,
     is_character_template,
     is_support_template,
     is_weapon_template,
@@ -184,6 +185,37 @@ async def card_detail_callback(callback: CallbackQuery):
             card_text += f"📜 Эффект пакта: {pact_effect.get('label', '')}\n"
 
         if is_character_template(card.card_template):
+            card_data = get_card_data_by_name(card.card_template.name) or {}
+            innate_technique = (
+                getattr(card.card_template, "innate_technique", None)
+                or card_data.get("innate_technique")
+            )
+            if innate_technique:
+                card_text += f"✨ Врождённая техника: {innate_technique}\n"
+
+            domain_name = card_data.get("domain_name")
+            if domain_name:
+                card_text += f"🏯 Территория: {domain_name}\n"
+
+            abilities = card.get_abilities()
+            if not abilities:
+                fallback_abilities = card_data.get("abilities") or []
+                if isinstance(fallback_abilities, str):
+                    abilities = [fallback_abilities]
+                else:
+                    abilities = list(fallback_abilities)
+            if abilities:
+                ability_names = []
+                for ability in abilities:
+                    if isinstance(ability, dict):
+                        name = ability.get("name")
+                    else:
+                        name = str(ability)
+                    if name:
+                        ability_names.append(name)
+                if ability_names:
+                    card_text += f"🌀 Способности: {', '.join(ability_names)}\n"
+
             card_text += (
                 f"🏯 Домен: Lv.{card.domain_level or 0}\n"
                 f"♻️ ОПТ: Lv.{card.rct_level or 0}\n"
