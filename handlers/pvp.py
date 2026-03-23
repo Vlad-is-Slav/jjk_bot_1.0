@@ -23,6 +23,7 @@ from utils.weapon_effects import get_weapon_effect
 from utils.pact_effects import get_pact_effect
 from utils.black_flash import get_black_flash_chance
 from utils.card_rewards import is_weapon_template
+from utils.character_content import get_character_profile as get_shared_character_profile
 from utils.combat_content import (
     BATTLERDAN_DEBATES,
     BATTLE_CE_MIN,
@@ -101,13 +102,13 @@ CHARACTER_PROFILES = [
                 "key": "red",
                 "name": "Красный",
                 "icon": "🔴",
-                "ce_cost": 2600,
+                "ce_cost": 2000,
                 "multiplier": 1.6,
                 "flat": 260,
                 "variants": {
                     "amp": {
                         "name": "Усиленный красный",
-                        "ce_cost": 3600,
+                        "ce_cost": 3500,
                         "multiplier": 1.9,
                         "flat": 360,
                     }
@@ -117,13 +118,13 @@ CHARACTER_PROFILES = [
                 "key": "purple",
                 "name": "Фиолетовый",
                 "icon": "🟣",
-                "ce_cost": 6200,
+                "ce_cost": 6000,
                 "multiplier": 2.7,
                 "flat": 580,
                 "variants": {
                     "amp": {
                         "name": "Усиленный фиолетовый",
-                        "ce_cost": 9000,
+                        "ce_cost": 10000,
                         "multiplier": 3.25,
                         "flat": 840,
                         "can_dodge": False,
@@ -510,11 +511,7 @@ def _is_gojo_name(name: str) -> bool:
 
 
 def _get_character_profile(card_name: str) -> dict:
-    normalized = _normalize_name(card_name)
-    for profile in CHARACTER_PROFILES:
-        if any(token in normalized for token in profile["tokens"]):
-            return profile
-    return DEFAULT_PROFILE
+    return get_shared_character_profile(card_name)
 
 
 def _is_higuruma(state: dict) -> bool:
@@ -1683,6 +1680,7 @@ def _action_domain(battle: dict, attacker_num: int):
 def _action_simple_domain(battle: dict, attacker_num: int):
     attacker = battle["fighters"][attacker_num]
     cost = attacker["simple_domain_cost"]
+    duration = max(1, int(attacker.get("simple_domain_duration", DEFAULT_SIMPLE_DOMAIN_DURATION)))
 
     if not attacker.get("has_simple_domain"):
         return False, "У тебя нет техники простой территории."
@@ -1691,15 +1689,15 @@ def _action_simple_domain(battle: dict, attacker_num: int):
     if not _spend_ce(attacker, cost):
         return False, "Недостаточно CE для простой территории."
 
-    attacker["simple_domain_turns"] = DEFAULT_SIMPLE_DOMAIN_DURATION
+    attacker["simple_domain_turns"] = duration
     if cost:
         battle["log"].append(
-            f"🛡 Простая территория активирована на {DEFAULT_SIMPLE_DOMAIN_DURATION} хода "
+            f"🛡 Простая территория активирована на {duration} хода "
             f"(-{cost} CE)."
         )
     else:
         battle["log"].append(
-            f"🛡 Простая территория активирована на {DEFAULT_SIMPLE_DOMAIN_DURATION} хода (бесплатно)."
+            f"🛡 Простая территория активирована на {duration} хода (бесплатно)."
         )
     return True, None
 
@@ -2491,6 +2489,7 @@ def _build_fighter_state(
     is_battlerdan = _name_has_tokens(main_name, BATTLERDAN_TOKENS)
 
     profile = _get_character_profile(main_name)
+    combat_traits = deepcopy(profile.get("combat_traits", {}))
     specials = [deepcopy(sp) for sp in profile.get("specials", [])]
 
     def _extend_specials(items: list[dict]):
@@ -2550,6 +2549,18 @@ def _build_fighter_state(
     has_domain = toolkit.get("has_domain", False)
     has_simple_domain = toolkit.get("has_simple_domain", False)
     has_reverse_ct = toolkit.get("has_reverse_ct", False)
+    if combat_traits.get("force_domain"):
+        has_domain = True
+    if combat_traits.get("disable_domain"):
+        has_domain = False
+    if combat_traits.get("force_simple_domain"):
+        has_simple_domain = True
+    if combat_traits.get("disable_simple_domain"):
+        has_simple_domain = False
+    if combat_traits.get("force_reverse_ct"):
+        has_reverse_ct = True
+    if combat_traits.get("disable_reverse_ct"):
+        has_reverse_ct = False
     if is_toji:
         has_domain = False
         has_simple_domain = False
@@ -2575,6 +2586,10 @@ def _build_fighter_state(
         "has_reverse_ct": has_reverse_ct,
         "domain_cost": BATTLE_DOMAIN_COST,
         "simple_domain_cost": 0,
+        "simple_domain_duration": max(
+            1,
+            DEFAULT_SIMPLE_DOMAIN_DURATION + int(combat_traits.get("simple_domain_duration_bonus", 0) or 0),
+        ),
         "rct_cost": BATTLE_RCT_COST,
         "simple_domain_turns": 0,
         "black_flash_chance": get_black_flash_chance(main_name),

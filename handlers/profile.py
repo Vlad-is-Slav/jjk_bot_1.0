@@ -20,12 +20,11 @@ from utils.card_rewards import (
 from utils.weapon_effects import get_weapon_effect
 from utils.pact_effects import get_pact_effect
 from utils.quote_rewards import ensure_quotes_for_owned_cards
+from utils.card_images import resolve_card_image_path
 
 router = Router()
 PROFILE_PAGE_SIZE = 6
 QUOTE_PAGE_SIZE = 5
-CARD_IMAGE_EXTENSIONS = ("jpg", "jpeg", "png", "webp")
-CARD_ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets" / "cards"
 TOJI_TOKENS = ("тоджи", "toji")
 AVATAR_UPLOAD_TIMEOUT = timedelta(minutes=5)
 profile_avatar_upload_waiting: dict[int, datetime] = {}
@@ -87,47 +86,234 @@ async def _load_profile_state(session, user: User):
     return profile_settings, avatar_card, favorite_quote, changed
 
 
+def _extract_command_args(message: Message) -> str:
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=1)
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+async def _find_user_by_target(session, target_raw: str | None = None, reply_message: Message | None = None) -> User | None:
+    if reply_message and reply_message.from_user:
+        result = await session.execute(
+            select(User).where(User.telegram_id == reply_message.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+        if user:
+            return user
+
+    raw = (target_raw or "").strip()
+    if not raw:
+        return None
+
+    if raw.startswith("@"):
+        raw = raw[1:].strip()
+    if not raw:
+        return None
+
+    if raw.isdigit():
+        result = await session.execute(
+            select(User).where(User.telegram_id == int(raw))
+        )
+        return result.scalar_one_or_none()
+
+    result = await session.execute(
+        select(User).where(func.lower(User.username) == raw.lower())
+    )
+    return result.scalar_one_or_none()
+
+
+def _slot_card_ids(user: User) -> dict[str, int | None]:
+    return {
+        "main": user.slot_1_card_id,
+        "weapon": user.slot_2_card_id,
+        "shikigami": user.slot_3_card_id,
+        "pact1": user.slot_4_card_id,
+        "pact2": user.slot_5_card_id,
+    }
+
+
+async def _load_equipped_cards(session, user: User) -> dict[str, UserCard | None]:
+    slot_ids = _slot_card_ids(user)
+    card_ids = [card_id for card_id in slot_ids.values() if card_id]
+    if not card_ids:
+        return {slot: None for slot in slot_ids}
+
+    result = await session.execute(
+        select(UserCard)
+        .options(selectinload(UserCard.card_template))
+        .where(UserCard.user_id == user.id, UserCard.id.in_(card_ids))
+    )
+    cards = result.scalars().all()
+    cards_by_id = {card.id: card for card in cards}
+
+    for card in cards_by_id.values():
+        if card.card_template:
+            card.recalculate_stats()
+
+    return {
+        slot: cards_by_id.get(card_id)
+        for slot, card_id in slot_ids.items()
+    }
+
+
+def _deck_power(slot_cards: dict[str, UserCard | None]) -> int:
+    return sum(card.get_total_power() for card in slot_cards.values() if card)
+
+
+async def _get_completed_achievement_count(session, user_id: int) -> int:
+    result = await session.execute(
+        select(func.count(UserAchievement.id)).where(
+            UserAchievement.user_id == user_id,
+            UserAchievement.completed == True,
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def _get_title_line(session, user: User) -> str:
+    if not user.equipped_title_id:
+        return "Без титула"
+
+    result = await session.execute(
+        select(Title).where(Title.id == user.equipped_title_id)
+    )
+    title = result.scalar_one_or_none()
+    if not title:
+        return "Без титула"
+    return f"{title.icon} {title.name}"
+
+
+async def _build_profile_payload(session, user: User, *, include_private: bool) -> dict:
+    slot_cards = await _load_equipped_cards(session, user)
+    total_power = _deck_power(slot_cards)
+    completed_achievements = await _get_completed_achievement_count(session, user.id)
+    total_achievements = len(ACHIEVEMENTS)
+    title_line = await _get_title_line(session, user)
+    profile_settings, avatar_card, favorite_quote, changed = await _load_profile_state(session, user)
+
+    has_custom_avatar = bool(profile_settings.avatar_file_id)
+    avatar_name = (
+        "Загруженный"
+        if has_custom_avatar
+        else (avatar_card.card_template.name if avatar_card and avatar_card.card_template else "Стандартный")
+    )
+    quote_line = f"«{html.escape(_quote_preview(favorite_quote))}»" if favorite_quote else "не выбрана"
+    avatar_image_path = _resolve_avatar_image_path(avatar_card)
+    avatar_file_line = "есть" if (has_custom_avatar or avatar_image_path) else "не найден"
+
+    display_name = html.escape(user.first_name or "Маг")
+    username_line = f"@{html.escape(user.username)}" if user.username else "Нет username"
+
+    lines = [
+        f"👤 <b>Профиль: {display_name}</b>",
+        username_line,
+        "",
+        "📊 <b>Статистика:</b>",
+        f"⭐ Уровень: {user.level}",
+        f"📈 Опыт: {user.experience}/{user.experience_to_next}",
+    ]
+    if include_private:
+        lines.extend([
+            f"💎 Очки: {user.points}",
+            f"🪙 Монеты: {user.coins}",
+        ])
+    lines.extend([
+        f"💪 Общая сила: {total_power}",
+        f"🏆 Достижения: {completed_achievements}/{total_achievements}",
+        f"🏷 Титул: {html.escape(title_line)}",
+        "⚔️ <b>Боевая статистика:</b>",
+        f"🏆 PvP побед: {user.pvp_wins}",
+        f"💀 PvP поражений: {user.pvp_losses}",
+        f"📊 Winrate: {user.get_win_rate()}%",
+        f"👹 PvE побед: {user.pve_wins}",
+        f"📊 Всего боев: {user.total_battles}",
+        "",
+        "🎴 <b>Колода:</b>",
+    ])
+
+    deck_labels = [
+        ("main", "👑", "Не выбрано"),
+        ("weapon", "🗡️", "Не выбрано"),
+        ("shikigami", "🐺", "Не выбрано"),
+        ("pact1", "📜", "Пакт 1: не выбран"),
+        ("pact2", "📜", "Пакт 2: не выбран"),
+    ]
+    for slot, icon, empty_text in deck_labels:
+        card = slot_cards[slot]
+        if card and card.card_template:
+            lines.append(f"{icon} {html.escape(card.card_template.name)} (Lv.{card.level})")
+        else:
+            lines.append(f"{icon} {empty_text}")
+
+    lines.extend([
+        "",
+        "🖼 <b>Оформление:</b>",
+        f"Аватар: {html.escape(avatar_name)}",
+        f"Цитата: {quote_line}",
+        f"Файл аватара: {avatar_file_line}",
+    ])
+
+    return {
+        "text": "\n".join(lines),
+        "changed": changed,
+        "profile_settings": profile_settings,
+        "avatar_file_id": profile_settings.avatar_file_id,
+        "avatar_image_path": avatar_image_path,
+        "display_name": user.first_name or "Игрок",
+        "slot_cards": slot_cards,
+        "total_power": total_power,
+    }
+
+
+async def _send_profile_message(message: Message, payload: dict, reply_markup=None):
+    text = payload["text"]
+    avatar_file_id = payload.get("avatar_file_id")
+    avatar_image_path = payload.get("avatar_image_path")
+
+    if reply_markup is not None:
+        if avatar_file_id:
+            await message.answer_photo(avatar_file_id)
+        elif avatar_image_path:
+            await message.answer_photo(FSInputFile(avatar_image_path))
+        await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+        return
+
+    if avatar_file_id and len(text) <= 1024:
+        await message.answer_photo(
+            avatar_file_id,
+            caption=text,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+        return
+
+    if avatar_image_path and len(text) <= 1024:
+        await message.answer_photo(
+            FSInputFile(avatar_image_path),
+            caption=text,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+        return
+
+    if avatar_file_id:
+        await message.answer_photo(avatar_file_id)
+    elif avatar_image_path:
+        await message.answer_photo(FSInputFile(avatar_image_path))
+
+    await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+
+
 def _quote_preview(quote: str, max_len: int = 80) -> str:
     if len(quote) <= max_len:
         return quote
     return quote[: max_len - 1].rstrip() + "…"
 
 
-def _card_image_variants(card_name: str) -> list[str]:
-    base = (card_name or "").strip()
-    if not base:
-        return []
-
-    normalized_space = " ".join(base.split())
-    variants = {
-        normalized_space,
-        normalized_space.replace(" ", "_"),
-        normalized_space.replace(" ", "-"),
-        normalized_space.replace("ё", "е").replace("Ё", "Е"),
-    }
-    variants.update({
-        name.replace(" ", "_")
-        for name in list(variants)
-    })
-    variants.update({
-        name.replace(" ", "-")
-        for name in list(variants)
-    })
-    return [name for name in variants if name]
-
-
 def _resolve_avatar_image_path(avatar_card: UserCard | None) -> Path | None:
     if not avatar_card or not avatar_card.card_template:
         return None
-    if not CARD_ASSETS_DIR.exists():
-        return None
-
-    for base_name in _card_image_variants(avatar_card.card_template.name):
-        for ext in CARD_IMAGE_EXTENSIONS:
-            candidate = CARD_ASSETS_DIR / f"{base_name}.{ext}"
-            if candidate.exists():
-                return candidate
-    return None
+    return resolve_card_image_path(avatar_card.card_template.name)
 
 
 def _profile_customization_keyboard() -> InlineKeyboardMarkup:
@@ -211,76 +397,37 @@ async def _render_profile_customization(callback: CallbackQuery):
 async def cmd_profile(message: Message):
     """Команда /profile"""
     async with async_session() as session:
-        result = await session.execute(
+        target_raw = _extract_command_args(message)
+        has_target_request = bool(target_raw or (message.reply_to_message and message.reply_to_message.from_user))
+
+        own_result = await session.execute(
             select(User).where(User.telegram_id == message.from_user.id)
         )
-        user = result.scalar_one_or_none()
+        own_user = own_result.scalar_one_or_none()
 
-        if not user:
+        if not own_user and not has_target_request:
             await message.answer("Сначала используй /start")
             return
 
-        profile_settings, avatar_card, favorite_quote, changed = await _load_profile_state(session, user)
-        if changed:
+        target_user = await _find_user_by_target(session, target_raw, message.reply_to_message)
+        if target_user is None and has_target_request:
+            await message.answer(
+                "Игрок не найден. Используй <code>/profile @username</code>, <code>/profile ID</code> или ответь на сообщение игрока.",
+                parse_mode="HTML",
+            )
+            return
+        if target_user is None:
+            target_user = own_user
+        elif own_user and target_user.id == own_user.id:
+            target_user = own_user
+
+        include_private = bool(own_user and target_user and target_user.id == own_user.id)
+        payload = await _build_profile_payload(session, target_user, include_private=include_private)
+        if payload["changed"]:
             await session.commit()
 
-        result = await session.execute(
-            select(func.count(UserAchievement.id)).where(
-                UserAchievement.user_id == user.id,
-                UserAchievement.completed == True,
-            )
-        )
-        completed_achievements = int(result.scalar() or 0)
-        total_achievements = len(ACHIEVEMENTS)
-
-        title_line = "Без титула"
-        if user.equipped_title_id:
-            result = await session.execute(
-                select(Title).where(Title.id == user.equipped_title_id)
-            )
-            title = result.scalar_one_or_none()
-            if title:
-                title_line = f"{title.icon} {title.name}"
-
-        has_custom_avatar = bool(profile_settings.avatar_file_id)
-        avatar_name = (
-            "Загруженный"
-            if has_custom_avatar
-            else (avatar_card.card_template.name if avatar_card and avatar_card.card_template else "Стандартный")
-        )
-        quote_line = f"«{html.escape(_quote_preview(favorite_quote))}»" if favorite_quote else "не выбрана"
-        avatar_image_path = _resolve_avatar_image_path(avatar_card)
-        avatar_file_line = "есть" if (has_custom_avatar or avatar_image_path) else "не найден"
-
-        profile_text = (
-            f"👤 <b>Профиль: {user.first_name or 'Маг'}</b>\n\n"
-            f"⭐ Уровень: {user.level}\n"
-            f"📈 Опыт: {user.experience}/{user.experience_to_next}\n"
-            f"💎 Очки: {user.points}\n"
-            f"🪙 Монеты: {user.coins}\n\n"
-            f"🏆 Достижения: {completed_achievements}/{total_achievements}\n"
-            f"👑 Титул: {title_line}\n\n"
-            f"🖼 Аватар: {html.escape(avatar_name)}\n"
-            f"💬 Цитата: {quote_line}\n"
-            f"🗂 Файл аватара: {avatar_file_line}"
-        )
-
-        if profile_settings.avatar_file_id:
-            await message.answer_photo(
-                profile_settings.avatar_file_id,
-                caption=profile_text,
-                reply_markup=get_profile_menu(),
-                parse_mode="HTML",
-            )
-        elif avatar_image_path:
-            await message.answer_photo(
-                FSInputFile(avatar_image_path),
-                caption=profile_text,
-                reply_markup=get_profile_menu(),
-                parse_mode="HTML",
-            )
-        else:
-            await message.answer(profile_text, reply_markup=get_profile_menu(), parse_mode="HTML")
+        reply_markup = get_profile_menu() if include_private else None
+        await _send_profile_message(message, payload, reply_markup=reply_markup)
 
 @router.callback_query(F.data == "profile")
 async def profile_callback(callback: CallbackQuery):
@@ -294,171 +441,15 @@ async def profile_callback(callback: CallbackQuery):
         if not user:
             await callback.answer("Сначала используй /start", show_alert=True)
             return
-        
-        # Получаем экипированные карты
-        main_card = None
-        weapon_card = None
-        shikigami_card = None
-        pact_card_1 = None
-        pact_card_2 = None
-
-        if user.slot_1_card_id:
-            result = await session.execute(
-                select(UserCard)
-                .options(selectinload(UserCard.card_template))
-                .where(UserCard.id == user.slot_1_card_id)
-            )
-            main_card = result.scalar_one_or_none()
-            if main_card and main_card.card_template:
-                main_card.recalculate_stats()
-
-        if user.slot_2_card_id:
-            result = await session.execute(
-                select(UserCard)
-                .options(selectinload(UserCard.card_template))
-                .where(UserCard.id == user.slot_2_card_id)
-            )
-            weapon_card = result.scalar_one_or_none()
-            if weapon_card and weapon_card.card_template:
-                weapon_card.recalculate_stats()
-
-        if user.slot_3_card_id:
-            result = await session.execute(
-                select(UserCard)
-                .options(selectinload(UserCard.card_template))
-                .where(UserCard.id == user.slot_3_card_id)
-            )
-            shikigami_card = result.scalar_one_or_none()
-            if shikigami_card and shikigami_card.card_template:
-                shikigami_card.recalculate_stats()
-
-        if user.slot_4_card_id:
-            result = await session.execute(
-                select(UserCard)
-                .options(selectinload(UserCard.card_template))
-                .where(UserCard.id == user.slot_4_card_id)
-            )
-            pact_card_1 = result.scalar_one_or_none()
-            if pact_card_1 and pact_card_1.card_template:
-                pact_card_1.recalculate_stats()
-
-        if user.slot_5_card_id:
-            result = await session.execute(
-                select(UserCard)
-                .options(selectinload(UserCard.card_template))
-                .where(UserCard.id == user.slot_5_card_id)
-            )
-            pact_card_2 = result.scalar_one_or_none()
-            if pact_card_2 and pact_card_2.card_template:
-                pact_card_2.recalculate_stats()
-
-        # Рассчитываем общую силу
-        total_power = 0
-        for card in (main_card, weapon_card, shikigami_card, pact_card_1, pact_card_2):
-            if card:
-                total_power += card.get_total_power()
-        
-        
-        result = await session.execute(
-            select(func.count(UserAchievement.id)).where(
-                UserAchievement.user_id == user.id,
-                UserAchievement.completed == True,
-            )
-        )
-        completed_achievements = int(result.scalar() or 0)
-        total_achievements = len(ACHIEVEMENTS)
-
-        title_line = "Без титула"
-        if user.equipped_title_id:
-            result = await session.execute(
-                select(Title).where(Title.id == user.equipped_title_id)
-            )
-            title = result.scalar_one_or_none()
-            if title:
-                title_line = f"{title.icon} {title.name}"
-        profile_text = (
-            f"👤 <b>Профиль: {user.first_name or 'Маг'}</b>\n"
-            f"@{user.username or 'Нет username'}\n\n"
-            f"📊 <b>Статистика:</b>\n"
-            f"⭐ Уровень: {user.level}\n"
-            f"📈 Опыт: {user.experience}/{user.experience_to_next}\n"
-            f"💎 Очки: {user.points}\n"
-            f"💪 Общая сила: {total_power}\n"
-            f"🏆 Достижения: {completed_achievements}/{total_achievements}\n"
-            f"🏷 Титул: {html.escape(title_line)}\n"
-            f"⚔️ <b>Боевая статистика:</b>\n"
-            f"🏆 PvP побед: {user.pvp_wins}\n"
-            f"💀 PvP поражений: {user.pvp_losses}\n"
-            f"📊 Winrate: {user.get_win_rate()}%\n"
-            f"👹 PvE побед: {user.pve_wins}\n"
-            f"📊 Всего боев: {user.total_battles}\n\n"
-            f"🎴 <b>Колода:</b>\n"
-        )
-        
-        if main_card and main_card.card_template:
-            profile_text += f"👑 {main_card.card_template.name} (Lv.{main_card.level})\n"
-        else:
-            profile_text += "👑 Не выбрано\n"
-
-        if weapon_card and weapon_card.card_template:
-            profile_text += f"🗡️ {weapon_card.card_template.name} (Lv.{weapon_card.level})\n"
-        else:
-            profile_text += "🗡️ Не выбрано\n"
-
-        if shikigami_card and shikigami_card.card_template:
-            profile_text += f"🐺 {shikigami_card.card_template.name} (Lv.{shikigami_card.level})\n"
-        else:
-            profile_text += "🐺 Не выбрано\n"
-
-        if pact_card_1 and pact_card_1.card_template:
-            profile_text += f"📜 {pact_card_1.card_template.name} (Lv.{pact_card_1.level})\n"
-        else:
-            profile_text += "📜 Пакт 1: не выбран\n"
-
-        if pact_card_2 and pact_card_2.card_template:
-            profile_text += f"📜 {pact_card_2.card_template.name} (Lv.{pact_card_2.level})\n"
-        else:
-            profile_text += "📜 Пакт 2: не выбран\n"
-
-        profile_settings, avatar_card, favorite_quote, changed = await _load_profile_state(session, user)
-        if changed:
+        payload = await _build_profile_payload(session, user, include_private=True)
+        if payload["changed"]:
             await session.commit()
 
-        result = await session.execute(
-            select(func.count(UserAchievement.id)).where(
-                UserAchievement.user_id == user.id,
-                UserAchievement.completed == True,
-            )
+        await callback.message.edit_text(
+            payload["text"],
+            reply_markup=get_profile_menu(),
+            parse_mode="HTML",
         )
-        completed_achievements = int(result.scalar() or 0)
-        total_achievements = len(ACHIEVEMENTS)
-
-        title_line = "Без титула"
-        if user.equipped_title_id:
-            result = await session.execute(
-                select(Title).where(Title.id == user.equipped_title_id)
-            )
-            title = result.scalar_one_or_none()
-            if title:
-                title_line = f"{title.icon} {title.name}"
-
-        has_custom_avatar = bool(profile_settings.avatar_file_id)
-        avatar_name = (
-            "Загруженный"
-            if has_custom_avatar
-            else (avatar_card.card_template.name if avatar_card and avatar_card.card_template else "Стандартный")
-        )
-        quote_line = f"«{html.escape(_quote_preview(favorite_quote))}»" if favorite_quote else "не выбрана"
-        avatar_image_path = _resolve_avatar_image_path(avatar_card)
-        avatar_file_line = "есть" if (has_custom_avatar or avatar_image_path) else "не найден"
-        profile_text += (
-            "\n🖼 <b>Оформление:</b>\n"
-            f"Аватар: {html.escape(avatar_name)}\n"
-            f"Цитата: {quote_line}\n"
-            f"Файл аватара: {avatar_file_line}"
-        )
-
-        await callback.message.edit_text(profile_text, reply_markup=get_profile_menu(), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "profile_stats")
@@ -508,53 +499,13 @@ async def my_deck_callback(callback: CallbackQuery):
         if not user:
             await callback.answer("Сначала используй /start", show_alert=True)
             return
-        
-        # Получаем экипированные карты
-        main_card = None
-        weapon_card = None
-        shikigami_card = None
-        pact_card_1 = None
-        pact_card_2 = None
 
-        if user.slot_1_card_id:
-            result = await session.execute(
-                select(UserCard).options(selectinload(UserCard.card_template)).where(UserCard.id == user.slot_1_card_id)
-            )
-            main_card = result.scalar_one_or_none()
-            if main_card and main_card.card_template:
-                main_card.recalculate_stats()
-
-        if user.slot_2_card_id:
-            result = await session.execute(
-                select(UserCard).options(selectinload(UserCard.card_template)).where(UserCard.id == user.slot_2_card_id)
-            )
-            weapon_card = result.scalar_one_or_none()
-            if weapon_card and weapon_card.card_template:
-                weapon_card.recalculate_stats()
-
-        if user.slot_3_card_id:
-            result = await session.execute(
-                select(UserCard).options(selectinload(UserCard.card_template)).where(UserCard.id == user.slot_3_card_id)
-            )
-            shikigami_card = result.scalar_one_or_none()
-            if shikigami_card and shikigami_card.card_template:
-                shikigami_card.recalculate_stats()
-
-        if user.slot_4_card_id:
-            result = await session.execute(
-                select(UserCard).options(selectinload(UserCard.card_template)).where(UserCard.id == user.slot_4_card_id)
-            )
-            pact_card_1 = result.scalar_one_or_none()
-            if pact_card_1 and pact_card_1.card_template:
-                pact_card_1.recalculate_stats()
-
-        if user.slot_5_card_id:
-            result = await session.execute(
-                select(UserCard).options(selectinload(UserCard.card_template)).where(UserCard.id == user.slot_5_card_id)
-            )
-            pact_card_2 = result.scalar_one_or_none()
-            if pact_card_2 and pact_card_2.card_template:
-                pact_card_2.recalculate_stats()
+        slot_cards = await _load_equipped_cards(session, user)
+        main_card = slot_cards["main"]
+        weapon_card = slot_cards["weapon"]
+        shikigami_card = slot_cards["shikigami"]
+        pact_card_1 = slot_cards["pact1"]
+        pact_card_2 = slot_cards["pact2"]
 
         deck_text = "🎴 <b>Моя колода</b>\n\n"
 
@@ -611,11 +562,8 @@ async def my_deck_callback(callback: CallbackQuery):
         else:
             deck_text += "📜 <b>Пакт 2:</b> Не выбран\n\n"
 
-        if any([main_card, weapon_card, shikigami_card, pact_card_1, pact_card_2]):
-            total_power = 0
-            for card in (main_card, weapon_card, shikigami_card, pact_card_1, pact_card_2):
-                if card:
-                    total_power += card.get_total_power()
+        if any(slot_cards.values()):
+            total_power = _deck_power(slot_cards)
             deck_text += f"💪 <b>Общая сила колоды:</b> {total_power}"
 
         await callback.message.edit_text(

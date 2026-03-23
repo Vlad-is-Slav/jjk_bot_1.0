@@ -1,9 +1,14 @@
+import shutil
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import delete, func, or_, select, update
 
-from config import ADMIN_IDS as CONFIG_ADMIN_IDS
+from config import ADMIN_IDS as CONFIG_ADMIN_IDS, BACKUP_OWNER_IDS, DATABASE_FILE_PATH
 from models import (
     async_session,
     Battle,
@@ -39,6 +44,7 @@ router = Router()
 
 # Запасной bootstrap-админ на случай пустого ADMIN_IDS в .env
 ADMIN_IDS = set(CONFIG_ADMIN_IDS + [1296861067])
+BACKUP_ALLOWED_IDS = set(BACKUP_OWNER_IDS + [1296861067])
 
 
 def _admin_panel_keyboard() -> InlineKeyboardMarkup:
@@ -238,6 +244,36 @@ async def cmd_admin(message: Message):
         reply_markup=_admin_panel_keyboard(),
         parse_mode="HTML",
     )
+
+
+@router.message(Command("backup"))
+async def cmd_backup(message: Message):
+    if message.from_user.id not in BACKUP_ALLOWED_IDS:
+        await message.answer("❌ Команда резервной копии доступна только владельцу бота.")
+        return
+
+    database_path = Path(DATABASE_FILE_PATH).expanduser().resolve()
+    if not database_path.exists():
+        await message.answer("❌ Файл базы данных не найден.")
+        return
+
+    snapshot_name = f"jujutsu_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+    snapshot_path = Path(tempfile.gettempdir()) / snapshot_name
+
+    try:
+        shutil.copy2(database_path, snapshot_path)
+        await message.answer_document(
+            FSInputFile(snapshot_path),
+            caption=(
+                "🗂 <b>Резервная копия базы готова</b>\n\n"
+                f"Файл: <code>{snapshot_name}</code>"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        await message.answer(f"❌ Не удалось подготовить резервную копию: {exc}")
+    finally:
+        snapshot_path.unlink(missing_ok=True)
 
 
 @router.message(Command("givecard"))

@@ -25,6 +25,7 @@ from utils.weapon_effects import get_weapon_effect
 from utils.pact_effects import get_pact_effect
 from utils.black_flash import get_black_flash_chance
 from utils.card_rewards import is_weapon_template
+from utils.character_content import get_character_profile as get_shared_character_profile
 from utils.combat_content import (
     BATTLERDAN_DEBATES,
     BATTLE_CE_MIN,
@@ -605,11 +606,7 @@ async def _get_user_technique_names(session, user_id: int) -> set[str]:
 
 
 def _get_character_profile(card_name: str) -> dict:
-    normalized = _normalize_name(card_name)
-    for profile in CHARACTER_PROFILES:
-        if any(token in normalized for token in profile["tokens"]):
-            return profile
-    return DEFAULT_PROFILE
+    return get_shared_character_profile(card_name)
 
 
 def _is_higuruma(state: dict) -> bool:

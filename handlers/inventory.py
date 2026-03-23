@@ -1,6 +1,9 @@
 ﻿from aiogram import Router, F
+
+from pathlib import Path
+
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 
@@ -23,16 +26,62 @@ from utils.card_rewards import (
 )
 from utils.weapon_effects import get_weapon_effect
 from utils.pact_effects import get_pact_effect
+from utils.card_images import resolve_card_image_source
 from utils.daily_quest_progress import add_daily_quest_progress
 from handlers.achievements import check_achievements
 
 router = Router()
 
+
+async def _render_inventory_message(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup,
+    photo_source: str | Path | None = None,
+):
+    chat_id = callback.message.chat.id
+    current_has_photo = bool(getattr(callback.message, "photo", None))
+
+    if photo_source:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+
+        photo = FSInputFile(photo_source) if isinstance(photo_source, Path) else photo_source
+        await callback.bot.send_photo(
+            chat_id,
+            photo,
+            caption=text,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+        return
+
+    if current_has_photo:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.bot.send_message(
+            chat_id,
+            text,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+        return
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=reply_markup,
+        parse_mode="HTML",
+    )
+
 @router.message(Command("inventory"))
 async def cmd_inventory(message: Message):
     """Команда /inventory"""
     await message.answer(
-        "🎒 <b>нвентарь</b>\n\n"
+        "🎒 <b>инвентарь</b>\n\n"
         "Выбери категорию:",
         reply_markup=get_inventory_menu(),
         parse_mode="HTML"
@@ -46,12 +95,12 @@ async def noop_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data == "inventory")
 async def inventory_callback(callback: CallbackQuery):
-    """нвентарь"""
-    await callback.message.edit_text(
-        "🎒 <b>нвентарь</b>\n\n"
+    """инвентарь"""
+    await _render_inventory_message(
+        callback,
+        "🎒 <b>инвентарь</b>\n\n"
         "Выбери категорию:",
         reply_markup=get_inventory_menu(),
-        parse_mode="HTML"
     )
     await callback.answer()
 
@@ -77,19 +126,19 @@ async def all_cards_callback(callback: CallbackQuery):
         cards = result.scalars().all()
         
         if not cards:
-            await callback.message.edit_text(
+            await _render_inventory_message(
+                callback,
                 "🎒 <b>У тебя пока нет карт!</b>\n\n"
                 "Сражайся на арене, чтобы получить новые карты.",
                 reply_markup=get_inventory_menu(),
-                parse_mode="HTML"
             )
             return
         
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             f"🎴 <b>Твои карты ({len(cards)}):</b>\n\n"
             "Выбери карту для просмотра:",
             reply_markup=get_card_list_keyboard(list(cards)),
-            parse_mode="HTML"
         )
     await callback.answer()
 
@@ -116,11 +165,11 @@ async def cards_page_callback(callback: CallbackQuery):
         )
         cards = result.scalars().all()
         
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             f"🎴 <b>Твои карты ({len(cards)}):</b>\n\n"
             "Выбери карту для просмотра:",
             reply_markup=get_card_list_keyboard(list(cards), page),
-            parse_mode="HTML"
         )
     await callback.answer()
 
@@ -150,6 +199,7 @@ async def card_detail_callback(callback: CallbackQuery):
             await callback.answer("Карта не найдена!", show_alert=True)
             return
         card.recalculate_stats()
+        card_data = get_card_data_by_name(card.card_template.name) or {}
 
         rarity_emojis = {
             "common": "⚪",
@@ -185,7 +235,6 @@ async def card_detail_callback(callback: CallbackQuery):
             card_text += f"📜 Эффект пакта: {pact_effect.get('label', '')}\n"
 
         if is_character_template(card.card_template):
-            card_data = get_card_data_by_name(card.card_template.name) or {}
             innate_technique = (
                 getattr(card.card_template, "innate_technique", None)
                 or card_data.get("innate_technique")
@@ -239,11 +288,13 @@ async def card_detail_callback(callback: CallbackQuery):
             card_text += f"⬆️ Стоимость прокачки: {STAT_UPGRADE_COST} очко"
         else:
             card_text += "🔒 Прокачка недоступна для этого типа карты"
-        
-        await callback.message.edit_text(
+
+        photo_source = resolve_card_image_source(card.card_template, card_data)
+        await _render_inventory_message(
+            callback,
             card_text,
             reply_markup=get_card_detail_keyboard(card_id, card.is_equipped, can_upgrade=can_upgrade),
-            parse_mode="HTML"
+            photo_source=photo_source,
         )
     await callback.answer()
 
@@ -314,10 +365,10 @@ async def salvage_card_callback(callback: CallbackQuery):
             ]
         )
 
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             warning,
             reply_markup=confirm_keyboard,
-            parse_mode="HTML"
         )
     await callback.answer()
 
@@ -408,20 +459,20 @@ async def confirm_salvage_callback(callback: CallbackQuery):
         cards = result.scalars().all()
 
         if not cards:
-            await callback.message.edit_text(
+            await _render_inventory_message(
+                callback,
                 "✅ <b>Карта утилизирована.</b>\n\n"
                 "🎒 <b>У тебя пока нет карт!</b>\n\n"
                 "Сражайся на арене, чтобы получить новые карты.",
                 reply_markup=get_inventory_menu(),
-                parse_mode="HTML"
             )
         else:
-            await callback.message.edit_text(
+            await _render_inventory_message(
+                callback,
                 f"✅ <b>Карта утилизирована.</b>\n\n"
                 f"🎴 <b>Твои карты ({len(cards)}):</b>\n\n"
                 "Выбери карту для просмотра:",
                 reply_markup=get_card_list_keyboard(list(cards)),
-                parse_mode="HTML"
             )
     await callback.answer()
 
@@ -493,10 +544,10 @@ async def upgrade_card_callback(callback: CallbackQuery):
         if not can_upgrade:
             upgrade_text += "\n❌ <b>Недостаточно очков!</b>"
         
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             upgrade_text,
             reply_markup=get_upgrade_keyboard(card_id, user.points, is_character_template(card.card_template)),
-            parse_mode="HTML"
         )
     await callback.answer()
 
@@ -691,15 +742,16 @@ async def character_cards_callback(callback: CallbackQuery):
         character_cards = [c for c in cards if c.card_template and is_character_template(c.card_template)]
         
         if not character_cards:
-            await callback.message.edit_text(
+            await _render_inventory_message(
+                callback,
                 "🎴 <b>У тебя нет карт персонажей!</b>\n\n"
                 "Сражайся на арене, чтобы получить их.",
                 reply_markup=get_inventory_menu(),
-                parse_mode="HTML"
             )
             return
         
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             f"⭐ <b>Карты персонажей ({len(character_cards)}):</b>\n\n"
             "Выбери карту для просмотра:",
             reply_markup=get_card_list_keyboard(
@@ -707,7 +759,6 @@ async def character_cards_callback(callback: CallbackQuery):
                 page_callback_prefix="character_page",
                 back_callback="inventory",
             ),
-            parse_mode="HTML"
         )
     await callback.answer()
 
@@ -737,7 +788,8 @@ async def character_cards_page_callback(callback: CallbackQuery):
 
         character_cards = [c for c in cards if c.card_template and is_character_template(c.card_template)]
 
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             f"⭐ <b>Карты персонажей ({len(character_cards)}):</b>\n\n"
             "Выбери карту для просмотра:",
             reply_markup=get_card_list_keyboard(
@@ -746,7 +798,6 @@ async def character_cards_page_callback(callback: CallbackQuery):
                 page_callback_prefix="character_page",
                 back_callback="inventory",
             ),
-            parse_mode="HTML"
         )
     await callback.answer()
 
@@ -774,15 +825,16 @@ async def support_cards_callback(callback: CallbackQuery):
         support_cards = [c for c in cards if c.card_template and is_support_template(c.card_template)]
         
         if not support_cards:
-            await callback.message.edit_text(
+            await _render_inventory_message(
+                callback,
                 "🛡️ <b>У тебя нет карт поддержки!</b>\n\n"
                 "Сражайся на арене, чтобы получить их.",
                 reply_markup=get_inventory_menu(),
-                parse_mode="HTML"
             )
             return
         
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             f"🛡️ <b>Карты поддержки ({len(support_cards)}):</b>\n\n"
             "Выбери карту для просмотра:",
             reply_markup=get_card_list_keyboard(
@@ -790,7 +842,6 @@ async def support_cards_callback(callback: CallbackQuery):
                 page_callback_prefix="support_page",
                 back_callback="inventory",
             ),
-            parse_mode="HTML"
         )
     await callback.answer()
 
@@ -820,7 +871,8 @@ async def support_cards_page_callback(callback: CallbackQuery):
 
         support_cards = [c for c in cards if c.card_template and is_support_template(c.card_template)]
 
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             f"🛡️ <b>Карты поддержки ({len(support_cards)}):</b>\n\n"
             "Выбери карту для просмотра:",
             reply_markup=get_card_list_keyboard(
@@ -829,7 +881,6 @@ async def support_cards_page_callback(callback: CallbackQuery):
                 page_callback_prefix="support_page",
                 back_callback="inventory",
             ),
-            parse_mode="HTML"
         )
     await callback.answer()
 
@@ -854,11 +905,11 @@ async def my_techniques_callback(callback: CallbackQuery):
         techniques = result.scalars().all()
         
         if not techniques:
-            await callback.message.edit_text(
+            await _render_inventory_message(
+                callback,
                 "✨ <b>У тебя пока нет техник!</b>\n\n"
                 "Посещай Техникум, чтобы получить новые техники.",
                 reply_markup=get_back_button("inventory"),
-                parse_mode="HTML"
             )
             return
         
@@ -873,13 +924,9 @@ async def my_techniques_callback(callback: CallbackQuery):
                 f"   Редкость: {tech.rarity}\n\n"
             )
         
-        await callback.message.edit_text(
+        await _render_inventory_message(
+            callback,
             tech_text,
             reply_markup=get_back_button("inventory"),
-            parse_mode="HTML"
         )
     await callback.answer()
-
-
-
-

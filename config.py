@@ -1,8 +1,35 @@
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+
+
+def _parse_int_list(raw_value: str | None, fallback: list[int] | None = None) -> list[int]:
+    values: list[int] = []
+    for chunk in (raw_value or "").replace(";", ",").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            values.append(int(chunk))
+        except ValueError:
+            continue
+    return values or list(fallback or [])
+
+
+def _resolve_database_path() -> Path:
+    explicit_path = (os.getenv("DATABASE_PATH") or "").strip()
+    if explicit_path:
+        return Path(explicit_path).expanduser()
+
+    railway_volume_path = (os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip()
+    if railway_volume_path:
+        return Path(railway_volume_path).expanduser() / "jujutsu_bot.db"
+
+    return Path("jujutsu_bot.db")
 
 EXP_PER_MESSAGE = 1  #   
 EXP_COOLDOWN = 30  #      
@@ -76,5 +103,9 @@ BLACK_FLASH_CHANCES = {
 STARTER_COINS = 1000
 STARTER_POINTS = 0
 
-ADMINS = [1296861067]
-ADMIN_IDS = [1296861067]
+DEFAULT_ADMIN_IDS = [1296861067]
+ADMIN_IDS = _parse_int_list(os.getenv("ADMIN_IDS"), fallback=DEFAULT_ADMIN_IDS)
+ADMINS = list(ADMIN_IDS)
+BACKUP_OWNER_IDS = _parse_int_list(os.getenv("BACKUP_OWNER_IDS"), fallback=ADMIN_IDS)
+
+DATABASE_FILE_PATH = _resolve_database_path()
