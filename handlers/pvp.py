@@ -84,7 +84,7 @@ CHARACTER_PROFILES = [
                 "key": "blue",
                 "name": "Синий",
                 "icon": "🔵",
-                "ce_cost": 900,
+                "ce_cost": 800,
                 "multiplier": 1.25,
                 "flat": 120,
                 "variants": {
@@ -138,7 +138,7 @@ CHARACTER_PROFILES = [
     },
     {
         "tokens": ["сукуна", "sukuna", "ryomen"],
-        "domain_name": "Храм Злобы",
+        "domain_name": "Гробница Зла",
         "domain_dot_pct": 0.14,
         "domain_damage_bonus": 0.28,
         "domain_effect": "sukuna_dot",
@@ -200,7 +200,7 @@ CHARACTER_PROFILES = [
         "specials": [
             {"key": "battle_blue", "name": "Синяя правда", "icon": "🔵", "ce_cost": 700, "multiplier": 1.25, "flat": 120},
             {"key": "battle_red", "name": "Красная правда", "icon": "🔴", "ce_cost": 1000, "multiplier": 1.5, "flat": 220},
-            {"key": "battle_bombs", "name": "Маленькие бомбочки", "icon": "🤏💣", "ce_cost": 0, "multiplier": 0.7, "flat": 40},
+            {"key": "battle_bombs", "name": "Маленькие бомбочки", "icon": "🤏💣", "ce_cost": 0, "multiplier": 1, "flat": 40},
         ],
     },
     {
