@@ -45,6 +45,18 @@ CARD_QUOTES = {
         "Я остаюсь собой при любых обстоятельствах.",
         "Гордость важнее страха.",
     ],
+    "ацуякусакабе": [
+        "Простая территория тоже требует мастерства.",
+        "Сначала выживи, потом спорь о стиле.",
+    ],
+    "такумаино": [
+        "Раз уж мне доверили дело, я не отступлю.",
+        "Благовестные звери, ведите меня.",
+    ],
+    "наобитодзэнин": [
+        "Запоздал на кадр - уже проиграл.",
+        "Скорость решает исход ещё до удара.",
+    ],
 }
 
 FALLBACK_QUOTES = [
@@ -70,5 +82,11 @@ def get_quotes_for_card(card_name: str) -> list[str]:
         return CARD_QUOTES.get("фушигуромегуми", FALLBACK_QUOTES)
     if "кугисаки" in normalized or "nobara" in normalized:
         return CARD_QUOTES.get("кугисакинобара", FALLBACK_QUOTES)
+    if "кусакабе" in normalized or "kusakabe" in normalized:
+        return CARD_QUOTES.get("ацуякусакабе", FALLBACK_QUOTES)
+    if "такума" in normalized or normalized.endswith("ино") or "ino" in normalized:
+        return CARD_QUOTES.get("такумаино", FALLBACK_QUOTES)
+    if "наобито" in normalized or "naobito" in normalized:
+        return CARD_QUOTES.get("наобитодзэнин", FALLBACK_QUOTES)
 
     return FALLBACK_QUOTES

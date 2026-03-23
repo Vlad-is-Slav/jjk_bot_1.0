@@ -3,6 +3,8 @@
 Основано на "Магическая битва" (Jujutsu Kaisen)
 """
 
+from utils.character_content import get_character_card_metadata
+
 # Список доступных карт персонажей
 CHARACTER_CARDS = [
     {
@@ -256,6 +258,42 @@ CHARACTER_CARDS = [
         "growth_multiplier": 1.11
     },
     {
+        "name": "Ацуя Кусакабе",
+        "description": "Наставник школы новой тени. Мастер простой территории и мгновенного батто.",
+        "rarity": "epic",
+        "base_attack": 59,
+        "base_defense": 55,
+        "base_speed": 74,
+        "base_hp": 285,
+        "base_ce": 110,
+        "ce_regen": 11,
+        "growth_multiplier": 1.11
+    },
+    {
+        "name": "Такума Ино",
+        "description": "Маг, полагающийся на маску и технику благовестных зверей в ближнем бою.",
+        "rarity": "rare",
+        "base_attack": 51,
+        "base_defense": 44,
+        "base_speed": 67,
+        "base_hp": 245,
+        "base_ce": 105,
+        "ce_regen": 10,
+        "growth_multiplier": 1.09
+    },
+    {
+        "name": "Наобито Дзэнин",
+        "description": "Бывший глава клана Дзэнин. Его проекционная магия превращает скорость в оружие.",
+        "rarity": "legendary",
+        "base_attack": 68,
+        "base_defense": 52,
+        "base_speed": 96,
+        "base_hp": 290,
+        "base_ce": 120,
+        "ce_regen": 11,
+        "growth_multiplier": 1.14
+    },
+    {
         "name": "Дагон",
         "description": "Проклятие особого уровня. Управляет океаном в своей территории.",
         "rarity": "legendary",
@@ -361,6 +399,11 @@ CHARACTER_CARDS = [
         "domain_name": "Чрево поглощённых проклятий",
     },
   ]
+
+for card in CHARACTER_CARDS:
+    metadata = get_character_card_metadata(card.get("name"))
+    if metadata:
+        card.update(metadata)
 
 # Карты шикигами (поддержка)
 SHIKIGAMI_CARDS = [

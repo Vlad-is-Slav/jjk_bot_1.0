@@ -126,6 +126,8 @@ def _apply_card_data_to_template(card_template: Card, card_data: dict, expected_
     card_template.growth_multiplier = card_data["growth_multiplier"]
     card_template.innate_technique = card_data.get("innate_technique")
     card_template.abilities = _serialize_abilities(card_data.get("abilities"))
+    if "image_url" in card_data:
+        card_template.image_url = card_data.get("image_url")
     if "black_flash_chance" in card_data:
         card_template.black_flash_chance = float(card_data.get("black_flash_chance", 2.0))
 

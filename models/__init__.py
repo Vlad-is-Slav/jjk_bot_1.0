@@ -12,6 +12,7 @@ from .market import MarketListing, TradeOffer, CoinTransaction
 from .profile_customization import UserProfile, UserQuote
 from .clan import Clan
 from .clan_daily import ClanDaily
+from .clan_request import ClanJoinRequest
 
 __all__ = [
     'Base',
@@ -48,5 +49,6 @@ __all__ = [
     'TradeOffer',
     'CoinTransaction',
     'Clan',
-    'ClanDaily'
+    'ClanDaily',
+    'ClanJoinRequest',
 ]
